@@ -1,0 +1,128 @@
+/* ============================================================================
+ * StudyBuddy design tokens
+ * ============================================================================
+ *
+ * Brief: a university student revising dense source material. The interface's
+ * single job is to sustain a focused answer-and-review loop without breaking
+ * concentration. Not a marketing page, not a chat app.
+ *
+ * SCOPING — read before editing.
+ * Everything here lives under [data-sb-surface]. It is deliberately NOT applied
+ * at :root. The ibl.ai SDK components ship their own styling and the vibe
+ * skills are explicit that it must not be overridden, so SDK surfaces (navbar,
+ * profile, account, notifications) keep the ibl.ai brand. Only surfaces we
+ * built opt in by setting data-sb-surface.
+ *
+ * Inside that scope we re-point shadcn's own variables (--background,
+ * --primary, --border, …) at StudyBuddy tokens. shadcn reads from those custom
+ * properties, so every shadcn component inside the scope recolours from the six
+ * tokens below with no per-component restyling. Retokenise, don't restyle.
+ * ========================================================================= */
+
+[data-sb-surface] {
+  /* --- Palette -------------------------------------------------------------
+   * Studying happens at night, often for hours. Built for low glare and long
+   * dwell time. */
+
+  --sb-paper: #f7f8fa; /* cool white ground — laser paper under library light */
+  --sb-ink: #14213d; /* deep navy — body text, primary actions */
+  --sb-rule: #d8dce4; /* hairline rules, borders, dividers */
+  --sb-margin: #5b6b8c; /* slate — annotation text, metadata, secondary UI */
+  --sb-mark: #e8b84b; /* ochre — correct, emphasis, highlight fill */
+  --sb-query: #b5546b; /* muted rose — needs review */
+
+  /* Feedback is ochre and rose, NOT green and red. This is formative
+   * assessment: a wrong answer means revisit, not fail. It also sidesteps the
+   * most common form of colour-blind ambiguity. Colour is never the sole
+   * carrier — always pair with a text label or icon.
+   *
+   * CONTRAST CONSTRAINT — do not undo this at 2am:
+   * --sb-mark on --sb-paper is roughly 1.8:1 and fails text contrast badly.
+   * Use --sb-mark as a FILL, UNDERLINE, or RULE only. Never as text on paper.
+   * For "correct" text use --sb-ink and let the ochre carry the fill.
+   * --sb-query on --sb-paper is ~4.6:1 and is safe for text at body size. */
+
+  --sb-mark-wash: #fdf6e4; /* ochre at low alpha, pre-flattened onto paper */
+  --sb-query-wash: #f8ecef; /* rose equivalent */
+
+  /* --- Type ----------------------------------------------------------------
+   * The three families encode something true rather than decorating:
+   *   serif = "this came from your document"
+   *   sans  = "this is the app talking"
+   *   mono  = "this is metadata"
+   * A reader learns the distinction within one question, untold. */
+
+  --sb-font-source: var(--font-source-serif), Georgia, "Times New Roman", serif;
+  --sb-font-system: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --sb-font-meta: var(--font-plex-mono), ui-monospace, "SFMono-Regular", monospace;
+
+  /* Tight scale. Two weights per family, no more. */
+  --sb-text-question: 1.25rem; /* 20px — question text, Source Serif */
+  --sb-text-body: 1rem; /* 16px */
+  --sb-text-margin: 0.875rem; /* 14px — margin rail annotations */
+  --sb-text-meta: 0.8125rem; /* 13px — mono citations, score */
+  --sb-leading: 1.6;
+
+  /* --- Geometry ----------------------------------------------------------- */
+  --sb-rail-width: 15rem; /* the margin rail */
+  --sb-measure: 34rem; /* question column — ~65 chars, a readable measure */
+  --sb-gutter: 2rem;
+
+  /* --- shadcn remap --------------------------------------------------------
+   * shadcn components read these. Overriding them here recolours every shadcn
+   * component inside the scope at once. */
+  --background: var(--sb-paper);
+  --foreground: var(--sb-ink);
+  --card: #ffffff;
+  --card-foreground: var(--sb-ink);
+  --popover: #ffffff;
+  --popover-foreground: var(--sb-ink);
+  --primary: var(--sb-ink);
+  --primary-foreground: var(--sb-paper);
+  --secondary: var(--sb-mark-wash);
+  --secondary-foreground: var(--sb-ink);
+  --muted: var(--sb-paper);
+  --muted-foreground: var(--sb-margin);
+  --accent: var(--sb-mark-wash);
+  --accent-foreground: var(--sb-ink);
+  --destructive: var(--sb-query);
+  --border: var(--sb-rule);
+  --input: var(--sb-rule);
+  --ring: var(--sb-ink);
+  --radius: 0.375rem; /* squarer than the shadcn default — paper, not app chrome */
+
+  background-color: var(--sb-paper);
+  color: var(--sb-ink);
+  font-family: var(--sb-font-system);
+}
+
+/* --- Quality floor --------------------------------------------------------
+ * Built in from the start rather than retrofitted, and asserted by the axe
+ * check in the Playwright suite. */
+
+/* Visible keyboard focus. Never `outline: none` without a replacement. */
+[data-sb-surface] :is(a, button, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--sb-ink);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Motion: one orchestrated moment, not scattered effects. When an evaluation
+ * returns, the margin note reveals as if written in. Nothing else animates.
+ * Opt-out by default — the animation only exists when motion is welcome. */
+@media (prefers-reduced-motion: no-preference) {
+  [data-sb-surface] .sb-annotation-enter {
+    animation: sb-write-in 200ms ease-out both;
+  }
+}
+
+@keyframes sb-write-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

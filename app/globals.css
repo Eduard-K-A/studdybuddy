@@ -2,6 +2,9 @@
 @import './iblai-styles.css';
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+/* StudyBuddy tokens — scoped to [data-sb-surface], never applied at :root.
+ * Imported last so its scoped declarations win inside our own surfaces. */
+@import './studybuddy.css';
 
 @custom-variant dark (&:is(.dark *));
 
