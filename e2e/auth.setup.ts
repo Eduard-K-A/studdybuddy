@@ -25,9 +25,16 @@ setup('authenticate', async ({ page }) => {
   // Navigate to the app — AuthProvider will redirect to the auth SPA
   await page.goto(APP_HOST, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
-  // Wait for the auth SPA login page — just check for /login and app=agent
+  // Wait for the auth SPA login page.
+  //
+  // The starter waited for `app=agent`, but lib/iblai/auth-utils.ts builds the
+  // redirect with `app=custom` — so this never matched and the setup hung for
+  // the full 60s. Verified live: localhost:3000 redirects to
+  //   login.iblai.app/login?app=custom&redirect-to=…&tenant=…
+  // Match on /login plus the tenant param instead, which holds for either
+  // value of `app` and still proves we reached the right tenant's login.
   await page.waitForURL(
-    (url) => url.href.includes('/login') && url.href.includes('app=agent'),
+    (url) => url.pathname.includes('/login') && url.searchParams.has('tenant'),
     { timeout: 60_000 },
   );
 
