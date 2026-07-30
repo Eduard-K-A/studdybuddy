@@ -14,8 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "vibe-starter",
-  description: "Built on the ibl.ai platform",
+  title: "StudyBuddy",
+  description:
+    "Upload your course material and get quizzed on it. Built on the ibl.ai platform.",
 };
 
 export const viewport: Viewport = {

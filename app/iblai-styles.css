@@ -23,9 +23,14 @@
 @import '@iblai/iblai-js/web-containers/styles';
 
 /* Scan SDK compiled JS so Tailwind generates classes used inside SDK components.
- * lib/iblai/sdk is a symlink to node_modules/@iblai/iblai-js/dist (created by
- * iblai add auth or iblai startapp). */
-@source "../lib/iblai/sdk/web-containers/source";
+ *
+ * Points at node_modules directly — the form documented in /iblai-vibe-auth
+ * Step 7. The starter routed this through a lib/iblai/sdk symlink, which does
+ * not survive `git clone` on Windows (core.symlinks defaults to false, so the
+ * link is checked out as a text file containing its target path). Tailwind then
+ * scans nothing and silently emits no utilities for SDK components — no build
+ * error, just unstyled SDK UI. */
+@source "../node_modules/@iblai/iblai-js/dist/web-containers/source";
 
 @custom-variant dark (&:is(.dark *));
 

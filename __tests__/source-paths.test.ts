@@ -1,12 +1,6 @@
 
 import { describe, it, expect } from "vitest";
-import {
-  readFileSync,
-  existsSync,
-  readdirSync,
-  lstatSync,
-  readlinkSync,
-} from "fs";
+import { readFileSync, existsSync, readdirSync } from "fs";
 import { resolve, dirname, join } from "path";
 
 /**
@@ -73,32 +67,46 @@ describe.skipIf(!nodeModulesExist)("@source paths", () => {
   }
 });
 
-describe.skipIf(!nodeModulesExist)("SDK symlink", () => {
-  const sdkLink = join(libDir, "iblai", "sdk");
+/**
+ * The starter reached the SDK's compiled source through a `lib/iblai/sdk`
+ * symlink. That link does not survive `git clone` on Windows, where
+ * core.symlinks defaults to false and the link is checked out as a plain file
+ * containing its target path — so Tailwind scanned nothing and SDK components
+ * rendered unstyled with no build error.
+ *
+ * `@source` now points at node_modules directly (the form documented in
+ * /iblai-vibe-auth Step 7), so the symlink is gone. These tests assert the
+ * invariant that actually matters: the directory Tailwind scans exists and
+ * holds the compiled JS it needs to extract class names from.
+ */
+describe.skipIf(!nodeModulesExist)("SDK Tailwind source", () => {
+  const sdkSourceDir = join(
+    projectRoot,
+    "node_modules",
+    "@iblai",
+    "iblai-js",
+    "dist",
+    "web-containers",
+    "source",
+  );
 
-  it("lib/iblai/sdk should exist", () => {
-    expect(existsSync(sdkLink)).toBe(true);
-  });
-
-  it("lib/iblai/sdk should be a symlink", () => {
-    expect(lstatSync(sdkLink).isSymbolicLink()).toBe(true);
-  });
-
-  it("lib/iblai/sdk symlink target should resolve", () => {
-    const target = readlinkSync(sdkLink);
-    const resolved = resolve(dirname(sdkLink), target);
+  it("SDK compiled source directory should exist", () => {
     expect(
-      existsSync(resolved),
-      `Symlink target does not exist: ${resolved}\n` +
-        `Symlink: ${sdkLink} -> ${target}\n` +
-        `Hint: run npm install to populate node_modules`,
+      existsSync(sdkSourceDir),
+      `Path does not exist: ${sdkSourceDir}\n` +
+        `Hint: run pnpm install to populate node_modules`,
     ).toBe(true);
   });
 
-  it("lib/iblai/sdk/web-containers/source should contain compiled JS", () => {
-    const sourceDir = join(sdkLink, "web-containers", "source");
-    expect(existsSync(sourceDir)).toBe(true);
-    const files = readdirSync(sourceDir);
+  it("SDK compiled source should contain compiled JS", () => {
+    const files = readdirSync(sdkSourceDir);
     expect(files).toContain("index.esm.js");
+  });
+
+  it("no stale lib/iblai/sdk symlink should remain", () => {
+    expect(
+      existsSync(join(libDir, "iblai", "sdk")),
+      "lib/iblai/sdk is gone by design — @source points at node_modules now",
+    ).toBe(false);
   });
 });
