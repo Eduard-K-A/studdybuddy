@@ -43,5 +43,16 @@ yarn-error.log*
 next-env.d.ts
 
 # agents
+# `npx skills add` mirrors every skill into one directory per agent tool.
+# vibe-starter ignores the first two; the rest are the same content again.
 .agents/skills
 .claude/skills
+.codebuddy/skills
+.kiro/skills
+.trae/skills
+.windsurf/skills
+
+# ibl.ai platform config — holds TOKEN (platform API key).
+# NOT covered by the `.env*` rule above: that only matches names starting
+# with ".env", and this file does not. Committing it leaks the token.
+iblai.env
