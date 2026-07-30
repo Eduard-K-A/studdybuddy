@@ -56,3 +56,6 @@ next-env.d.ts
 # NOT covered by the `.env*` rule above: that only matches names starting
 # with ".env", and this file does not. Committing it leaks the token.
 iblai.env
+
+# playwright-mcp scratch output (snapshots, console logs)
+.playwright-mcp/
