@@ -1,0 +1,42 @@
+# Cargo dependencies for the Rust side of the local-LLM contract.
+# Append these to `src-tauri/Cargo.toml` under `[dependencies]`.
+#
+# The entries below cover the typical implementation:
+#   - reqwest: HTTP to the Ollama daemon + downloads
+#   - tokio / futures-util: async / streaming for ollama_chat_stream
+#   - serde / serde_json: payload (de)serialization
+#   - sysinfo: free-disk-space probe + RAM total for get_system_memory
+#             (VRAM in get_system_memory shells out to `nvidia-smi` — no crate)
+#   - sha2 / hex: checksum verification for installer downloads
+#   - chrono: log timestamps
+#   - http: status-code helpers
+#
+# Minimal set actually needed for the daemon-HTTP-API implementation
+# (pull + chat over /api/*, no installer-checksum verification):
+#   reqwest { json, stream, rustls-tls }, tokio { full }, futures-util,
+#   sysinfo, chrono, serde, serde_json.
+# `blocking`, `sha2`, `hex`, and `http` are only needed if you download
+# and verify the Ollama installer yourself. `rustls-tls` (not the
+# default native-tls) avoids an OpenSSL system dependency.
+
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "stream",
+    "blocking",
+    "rustls-tls",
+] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+futures-util = "0.3"
+sysinfo = "0.30"
+sha2 = "0.10"
+hex = "0.4"
+chrono = "0.4"
+http = "1.0"
+
+# Already present once the Tauri shell is added (listed here for reference):
+# tauri = { version = "2", features = ["protocol-asset", "devtools"] }
+# tauri-plugin-shell = "2"
+# tauri-plugin-opener = "2.0.0"
+# tauri-plugin-os = "2.3.2"
