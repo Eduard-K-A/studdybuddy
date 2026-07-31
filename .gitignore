@@ -59,3 +59,8 @@ iblai.env
 
 # playwright-mcp scratch output (snapshots, console logs)
 .playwright-mcp/
+
+# Playwright auth storage state (contains live session tokens) and run output
+/playwright/
+/test-results/
+/playwright-report/
