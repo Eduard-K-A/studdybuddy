@@ -1,7 +1,8 @@
 # StudyBuddy
 
-Paste what you're revising, and an agent quizzes you on it — one question at a
-time, with the evaluation and the source citation in the margin.
+Upload a PDF, a Word document or your notes — or just paste them — and an agent
+quizzes you on it, one question at a time, with the evaluation and the source
+citation in the margin.
 
 Built as the bonus for the ibl.ai Software Engineer application: scaffolded with
 [iblai/vibe](https://github.com/iblai/vibe), extended with a quiz-mode layer.
@@ -12,7 +13,7 @@ Built as the bonus for the ibl.ai Software Engineer application: scaffolded with
 |---|---|
 | **Live URL** | **https://studdybuddy-lemon.vercel.app** |
 | **Baseline commit** | [`b072976`](../../commit/b072976) — the untouched scaffold |
-| **Tests** | 45 unit (Vitest) · 9 E2E (Playwright), incl. an axe scan |
+| **Tests** | 64 unit (Vitest) · 11 E2E (Playwright), incl. two axe scans |
 | **Lighthouse** | Accessibility **100** · SEO **100** · Best Practices **77** · Performance **41** ([why](#performance)) |
 | **Time spent** | roughly six hours |
 
@@ -29,7 +30,7 @@ Honest accounting of what is and isn't done:
 | Deliberate visual identity | ✅ six-token system, documented |
 | Deployed URL with working SSO | ✅ [live on Vercel](https://studdybuddy-lemon.vercel.app), SSO verified on the deployed origin |
 | Native desktop build | ⚠️ scaffolded, **not built** — no Rust toolchain ([why](docs/DESKTOP_BUILD.md)) |
-| Vitest + Playwright + axe | ✅ 45 + 9 green, zero critical/serious a11y violations |
+| Vitest + Playwright + axe | ✅ 64 + 11 green, zero critical/serious a11y violations |
 | Performance measured | ⚠️ measured and diagnosed, **not fixed** — Performance 41 ([why](#performance)) |
 | Debugging narrative | ✅ below |
 
@@ -55,8 +56,8 @@ pages, the Vitest and Playwright harnesses, and the Tauri templates.
 
 | Area | Files |
 |---|---|
-| Quiz domain logic | `lib/quiz/{context,parse,score,prompt,agent,types}.ts` |
-| Backend | `app/api/quiz/route.ts` |
+| Quiz domain logic | `lib/quiz/{context,parse,score,prompt,agent,extract,types}.ts` |
+| Backend | `app/api/quiz/route.ts`, `app/api/quiz/extract/route.ts` |
 | UI | `app/(app)/quiz/`, `components/quiz/*` |
 | State | `store/quiz-{api,slice}.ts` |
 | Design system | `app/studybuddy.css` |
@@ -76,6 +77,12 @@ particular platforms, which is what made them worth writing up.
 ```
 browser                        our server                   ibl.ai
 ───────                        ──────────                   ──────
+MaterialForm (client)
+  │  POST /api/quiz/extract   (multipart, one file)
+  ├──────────────────────────► app/api/quiz/extract/route.ts
+  │                              │ unpdf / mammoth      text
+  │  ◄─────────────────────────  └─ { title, body }
+  │
 QuizSession (client)
   │  POST /api/quiz
   ├──────────────────────────► app/api/quiz/route.ts
@@ -96,6 +103,66 @@ desktop build loads a remote origin rather than a static export
 
 The domain layer (`lib/quiz/`) is transport-agnostic and pure, which is what let
 it be built and tested before the transport was even known.
+
+---
+
+## Ingesting material
+
+`/quiz` takes **PDF, Word (`.docx`), and plain text (`.txt`, `.md`)** by file
+picker or drag-and-drop, or pasted text. Both routes converge on the same
+`{ title, body }` the paste form always produced, so nothing downstream — the
+context budget, the prompt, the agent — knows uploads exist.
+
+![The empty state: a drop zone above the title and material fields](docs/screens/quiz-empty.png)
+
+Three decisions worth naming:
+
+**Parsing is server-side.** The obvious alternative is PDF.js in the browser, and
+it is the wrong call here: the deployed bundle is already 2.1 MB with a 14.9 s
+LCP ([below](#performance)), so adding a parser to the critical path would make
+the app's worst measured problem worse. Extraction is also a once-per-session
+action, not a per-keystroke one. Server-side gives one failure path instead of
+one per browser engine, and `unpdf` ships a PDF.js build compiled for serverless
+runtimes specifically.
+
+**Extracted text lands in the textarea, not straight into a session.** Only the
+first ~12,000 characters reach the agent. If a 300-page textbook is silently
+truncated to its title page and copyright notice, the learner gets questions
+about the publisher. Putting the text in front of them — editable, with the
+filename shown above it — makes trimming to the chapter they actually care about
+the natural next move rather than a feature they have to discover.
+
+**The rules live in one pure module.** `lib/quiz/extract.ts` holds what is
+accepted, how big is too big, how a filename becomes a title, and what a scanned
+PDF looks like. Both the client (for instant feedback before spending a round
+trip) and the route import it, so the two cannot disagree about whether a file is
+valid. It has no `File`, no filesystem and no parser in it, which is why the
+rules that actually bite are unit-tested without fixtures.
+
+A few details that only show up once you handle real files:
+
+- **PDFs have no paragraphs.** Extractors emit one line per *rendered* line, so
+  naive output is a column of fragments and the agent's "¶3" citations become
+  meaningless. `cleanExtractedText` rejoins wrapped lines, repairs words
+  hyphenated across a break (`nucleo-\nphile` → `nucleophile`), and drops page
+  numbers sitting alone on a line — while keeping blank-line paragraph breaks,
+  which is the whole point.
+- **A near-empty PDF is a scan, not an empty document.** Telling someone their
+  file "contains no text" sends them hunting for the wrong problem; the message
+  says the page is an image. The threshold and the wording are both tested.
+- **Type is decided by extension, not by the browser's MIME type.** `File.type`
+  is empty on plenty of real drag-and-drop uploads and is trivially spoofed. The
+  extension is also what the user sees, so a rejection is at least explicable.
+  `.doc` is deliberately *not* accepted — it is a different container that
+  mammoth cannot open, so accepting it would only move the failure later.
+- **The 4 MB cap is Vercel's, not ours.** A serverless request body is capped at
+  4.5 MB; over that the platform rejects it with an opaque error before our code
+  runs. Staying under means the learner gets our message instead.
+
+Dragging is layered over a real labelled `<input type="file">`, not a
+replacement for it — a drop target is invisible to a screen reader and
+unreachable by keyboard. Extraction status is `aria-live`, because it finishes
+asynchronously and changes a textarea further down the page.
 
 ---
 
@@ -277,20 +344,29 @@ refresh-token rotation, JWKS verification, SAML.
 ## Testing
 
 ```bash
-pnpm test          # 45 Vitest unit tests
-pnpm test:e2e      # 9 Playwright tests (needs e2e/.env.development)
+pnpm test          # 64 Vitest unit tests
+pnpm test:e2e      # 11 Playwright tests (needs e2e/.env.development)
 pnpm lint          # 0 errors
 pnpm build
 ```
 
 Unit tests cover the pure logic: context truncation at sentence boundaries,
-tolerant parsing of model output, score accumulation, and the open-redirect
-guard. A few encode judgement rather than mechanics:
+tolerant parsing of model output, score accumulation, upload validation and PDF
+text repair, and the open-redirect guard. A few encode judgement rather than
+mechanics:
 
 - an unparseable evaluation degrades to `revisit`, **never** `correct` — grading
   generously on a parse failure would lie to the learner about what they know
 - re-evaluating a question **replaces** the verdict instead of appending, so a
   retry or a strict-mode double-invoke can't inflate the denominator
+- cleaning PDF output **preserves blank-line paragraph breaks** while rejoining
+  wrapped lines — the test asserts the result still splits into two paragraphs,
+  because that structure is what the agent's `¶` citations point at
+
+The extraction route was also exercised end to end against real bytes — a
+generated single-page PDF, a `.docx`, a `.md`, plus a truncated PDF, a
+zero-byte file, an unsupported extension and a missing form field — confirming
+each returns the intended status and a message the learner can act on.
 
 E2E covers the unauthenticated redirect, the authenticated render, a full
 answer→evaluation round trip, and **an axe scan of the quiz page — zero critical
@@ -360,10 +436,16 @@ third-party, and no CSP header. Both belong to the platform's auth flow.
 1. **Add credits and verify the live agent.** The success-path frame shape is the
    one part of the protocol I could not confirm; `textFrom()` in
    `lib/quiz/agent.ts` is a reasoned guess and is flagged as such.
-2. **Dataset-backed ingestion.** `AgentDatasetsTab` exists in the SDK but ships
-   no upload modal — `AddResourceModal` is a slot you implement. Paste-only was
-   the right call for the time box; RAG-grounded citations would be better.
-3. **Mobile SSO.** Flagged in the vibe README: mobile WebViews present a
+2. **Dataset-backed ingestion.** Uploads are handled in-app today, but the text
+   still goes through a 12,000-character context window rather than retrieval, so
+   a long document is quizzed on its opening section. `AgentDatasetsTab` exists
+   in the SDK but ships no upload modal — `AddResourceModal` is a slot you
+   implement. Pushing material into a dataset would replace truncation with
+   retrieval and ground citations in the real source.
+3. **OCR for scanned pages.** A photographed or scanned PDF currently gets an
+   honest refusal. It is the failure a student is most likely to hit, since it
+   is exactly what a phone camera produces.
+4. **Mobile SSO.** Flagged in the vibe README: mobile WebViews present a
    non-standard user agent that SSO providers reject. The fix is
    `ASWebAuthenticationSession` on iOS and Chrome Custom Tabs on Android. The
    scaffold already has the groundwork — `isTauriMobile()` swaps the redirect

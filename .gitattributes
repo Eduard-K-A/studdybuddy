@@ -1,0 +1,12 @@
+# Binary fixtures and assets must never have their line endings rewritten.
+#
+# `e2e/fixtures/sn2-notes.pdf` is a hand-built PDF whose bytes are almost all
+# printable ASCII, so git's text/binary heuristic guessed "text" and queued it
+# for LF→CRLF conversion on a Windows checkout. That shifts every byte offset
+# after the first newline, and a PDF's xref table stores absolute offsets — the
+# file would still look fine in a diff and fail to parse.
+*.pdf   binary
+*.docx  binary
+*.png   binary
+*.jpg   binary
+*.ico   binary

@@ -1,5 +1,9 @@
+import path from "node:path";
+
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+
+const FIXTURE_PDF = path.join(__dirname, "..", "fixtures", "sn2-notes.pdf");
 
 /**
  * The quiz journey.
@@ -36,6 +40,70 @@ test("refuses material that is too short to quiz on", async ({ page }) => {
   await page.getByLabel("Your material").fill("too short");
   await expect(page.getByRole("button", { name: /start quizzing me/i })).toBeDisabled();
   await expect(page.getByText(/bit short to build questions from/i)).toBeVisible();
+});
+
+test("an uploaded PDF becomes editable material", async ({ page }) => {
+  await page.goto("/quiz");
+  await page.getByLabel(/upload a file/i).setInputFiles(FIXTURE_PDF);
+
+  // The whole point of routing extraction through the textarea rather than
+  // starting a session directly: the learner can see and trim what was read.
+  const material = page.getByLabel("Your material");
+  await expect(material).toHaveValue(/trigonal bipyramidal/i, {
+    timeout: 30_000,
+  });
+
+  // Lines wrapped by the PDF renderer are rejoined, and a word hyphenated
+  // across a break is made whole again — "nucleo-\nphile".
+  await expect(material).toHaveValue(/nucleophile/i);
+
+  // The filename fills the title the learner left blank, and says so.
+  await expect(page.getByLabel(/what is this\?/i)).toHaveValue("sn2 notes");
+  await expect(page.getByText(/from sn2-notes\.pdf/i)).toBeVisible();
+
+  await expect(
+    page.getByRole("button", { name: /start quizzing me/i }),
+  ).toBeEnabled();
+});
+
+test("a file type we cannot read is refused with an actionable message", async ({
+  page,
+}) => {
+  await page.goto("/quiz");
+  await page.getByLabel(/upload a file/i).setInputFiles({
+    name: "lecture-slides.pptx",
+    mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    buffer: Buffer.from("not really a deck"),
+  });
+
+  // Scoped to the form: Next mounts its own empty role="alert" route announcer
+  // on every page, so an unscoped alert lookup is ambiguous by construction.
+  const alert = page.locator("form").getByRole("alert");
+
+  // Rejected in the browser, so no round trip is spent on it.
+  await expect(alert).toContainText(/\.pptx/);
+  await expect(alert).toContainText(/PDF, Word/i);
+  await expect(page.getByLabel("Your material")).toHaveValue("");
+});
+
+test("the empty state has no critical or serious accessibility violations", async ({
+  page,
+}) => {
+  // Scanned separately from the answered surface below: the upload controls
+  // only exist here, and a file input beside a drop target is exactly the sort
+  // of thing that ends up with an unlabelled control.
+  await page.goto("/quiz");
+  await expect(page.getByLabel("Your material")).toBeVisible();
+
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+
+  expect(
+    results.violations.filter(
+      (v) => v.impact === "critical" || v.impact === "serious",
+    ),
+  ).toEqual([]);
 });
 
 test("submitting an answer produces an evaluation in the margin rail", async ({

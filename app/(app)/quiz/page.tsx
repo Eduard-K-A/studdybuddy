@@ -29,7 +29,8 @@ export default function QuizPage() {
             className="text-[length:var(--sb-text-margin)]"
             style={{ color: "var(--sb-margin)" }}
           >
-            Paste something you&rsquo;re revising and answer questions on it.
+            Upload or paste something you&rsquo;re revising, and answer questions
+            on it.
           </p>
         </header>
 

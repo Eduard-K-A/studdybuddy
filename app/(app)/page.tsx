@@ -29,7 +29,7 @@ export default function Home() {
             className="text-3xl leading-tight sm:text-4xl"
             style={{ fontFamily: "var(--sb-font-source)", color: "var(--sb-ink)" }}
           >
-            Paste what you&rsquo;re revising. Get quizzed on it.
+            Upload what you&rsquo;re revising. Get quizzed on it.
           </h1>
           <p
             className="text-base leading-relaxed"
@@ -56,8 +56,8 @@ export default function Home() {
             Start a quiz
           </Link>
           <p className="mt-3 text-sm" style={{ color: "var(--sb-margin)" }}>
-            Bring a few paragraphs of lecture notes, a chapter summary, or an
-            article. No upload needed.
+            Bring a PDF, a Word document, or a few paragraphs of lecture notes.
+            Paste it if you&rsquo;d rather.
           </p>
         </div>
 
