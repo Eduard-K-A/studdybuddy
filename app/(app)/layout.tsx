@@ -9,6 +9,7 @@ import {
 import config from '@/lib/iblai/config';
 import { useIblSession } from '@/lib/iblai/session';
 import { handleLogout } from '@/lib/iblai/auth-utils';
+import { ReturnTo } from '@/components/return-to';
 
 const NAV_LINKS: NavLink[] = [
   { name: 'Home', href: '/', segment: null },
@@ -28,11 +29,14 @@ export default function AppLayout({
   children: React.ReactNode;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const { tenantKey, username, email, isAdmin, tenants, currentTenant } =
+  const { tenantKey, username, email, isAdmin, tenants, currentTenant, ready } =
     useIblSession();
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-white">
+      {/* Restores the destination middleware parked before the SSO round trip. */}
+      <ReturnTo authenticated={ready && Boolean(username)} />
+
       <NavBar
         onMenuClick={() => setDrawerOpen((prev) => !prev)}
         links={NAV_LINKS}
