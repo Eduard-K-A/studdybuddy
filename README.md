@@ -10,9 +10,10 @@ Built as the bonus for the ibl.ai Software Engineer application: scaffolded with
 
 | | |
 |---|---|
-| **Live URL** | _not yet deployed — see [Status](#status)_ |
+| **Live URL** | **https://studdybuddy-lemon.vercel.app** |
 | **Baseline commit** | [`b072976`](../../commit/b072976) — the untouched scaffold |
 | **Tests** | 45 unit (Vitest) · 9 E2E (Playwright), incl. an axe scan |
+| **Lighthouse** | Accessibility **100** · SEO **100** · Best Practices **77** · Performance **41** ([why](#performance)) |
 | **Time spent** | roughly six hours |
 
 ---
@@ -26,9 +27,10 @@ Honest accounting of what is and isn't done:
 | Public repo, conventional commits | ✅ 12 commits |
 | Working quiz flow | ⚠️ works, but **offline** — the ibl.ai platform has no credits (see below) |
 | Deliberate visual identity | ✅ six-token system, documented |
-| Deployed URL with working SSO | ⛔ not deployed yet |
+| Deployed URL with working SSO | ✅ [live on Vercel](https://studdybuddy-lemon.vercel.app), SSO verified on the deployed origin |
 | Native desktop build | ⚠️ scaffolded, **not built** — no Rust toolchain ([why](docs/DESKTOP_BUILD.md)) |
 | Vitest + Playwright + axe | ✅ 45 + 9 green, zero critical/serious a11y violations |
+| Performance measured | ⚠️ measured and diagnosed, **not fixed** — Performance 41 ([why](#performance)) |
 | Debugging narrative | ✅ below |
 
 **The agent cannot generate.** The ibl.ai platform this was built against sits at
@@ -258,7 +260,58 @@ Accessibility was built in rather than retrofitted: visible 2px focus rings,
 `aria-live` on the margin rail so evaluations are announced, labelled inputs,
 reduced motion respected, and colour never the sole carrier of a verdict.
 
-**Lighthouse:** not yet run — it needs the deployed URL.
+<h3 id="performance">Performance</h3>
+
+Lighthouse 13.3.0, mobile, simulated throttling, against the deployed URL:
+
+| Category | Score |
+|---|---|
+| Accessibility | **100** |
+| SEO | **100** |
+| Best Practices | 77 |
+| Performance | **41** |
+
+Core Web Vitals:
+
+| Metric | Value | |
+|---|---|---|
+| CLS | **0** | perfect |
+| FCP | 1.2 s | good |
+| LCP | **14.9 s** | bad |
+| TBT | 1,360 ms | bad |
+| INP | n/a | no interaction during a navigation audit |
+
+I'd rather show the number and the diagnosis than quietly omit it.
+
+**Why LCP is 14.9 s.** It is not network latency — TTFB was 38 ms and the server
+responded in 36 ms. The LCP breakdown puts **5,466 ms into "element render
+delay"**, and the trace shows why: this is a client-rendered SPA whose
+`AuthProvider` blocks paint until the SDK has booted and resolved a session, and
+that resolution is a **serial chain of eight cross-origin calls** to
+`api.iblai.app` — custom-domains → platform → features → org metadata → RBAC →
+user metadata → accounts → notifications. Each carries a CORS preflight, and each
+waits on the last. Nothing paints until the chain finishes.
+
+Underneath that sits **2,163 KiB of JavaScript across 15 chunks**, two of which
+dominate — 840 KiB and 640 KiB transferred, and Lighthouse measures **64–67 % of
+both as unused** on this route. That is the SDK bundle, not application code:
+`lib/quiz/` is a few kilobytes of pure functions.
+
+So the honest reading is that the performance ceiling here is set by the
+scaffold's architecture — client-side auth gating plus an unsplit SDK — and not
+by the quiz layer. Fixing it properly means moving session resolution off the
+render path, which is the same architectural question
+[AUTH_NOTES.md](docs/AUTH_NOTES.md) raises about `localStorage` versus cookies.
+Both problems have one root cause, and I'd rather name it than paper over it.
+
+What I did fix from this audit: the deployed home page was **still the
+scaffold's placeholder** — "Welcome to ibl.ai, add features with the ibl.ai CLI",
+linking to a CLI repo that isn't publicly reachable, with no route into `/quiz`
+at all. It was also the LCP element. It is now a real landing page: a server
+component, no client JS, no hero image.
+
+**Best Practices 77** is entirely third-party: five `ibl.ai` cookies flagged as
+third-party, and no CSP header. Both belong to the platform's auth flow.
 
 ---
 
