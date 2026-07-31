@@ -215,11 +215,20 @@ export class IblAgent implements QuizAgent {
  * evaluation.
  */
 export class StubAgent implements QuizAgent {
+  /** Prefer substantive sentences — a short declarative one ("X happens in a
+   *  single step.") makes a thin question and grades badly on keyword overlap.
+   *  Falls back progressively so short material still yields something. */
   private sentences(excerpt: string): string[] {
-    return excerpt
+    const all = excerpt
       .split(/(?<=[.!?])\s+/)
       .map((s) => s.trim())
-      .filter((s) => s.length > 40);
+      .filter(Boolean);
+
+    const substantial = all.filter((s) => s.length > 80);
+    if (substantial.length > 0) return substantial;
+
+    const usable = all.filter((s) => s.length > 40);
+    return usable.length > 0 ? usable : all;
   }
 
   async ask(context: QuizContext, previouslyAsked: readonly string[]) {

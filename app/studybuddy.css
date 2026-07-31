@@ -91,6 +91,29 @@
   --ring: var(--sb-ink);
   --radius: 0.375rem; /* squarer than the shadcn default — paper, not app chrome */
 
+  /* --- ibl.ai brand-variable remap ----------------------------------------
+   * Overriding shadcn's variables above is NOT sufficient on its own.
+   *
+   * The SDK stylesheet (@iblai/iblai-js/web-containers/styles) REDEFINES
+   * Tailwind's utility classes to read a parallel set of brand variables. Two
+   * rules for `.bg-primary` end up in the cascade:
+   *
+   *   .bg-primary { background-color: var(--primary); }        <- Tailwind
+   *   .bg-primary { background-color: var(--primary-color); }  <- the SDK
+   *
+   * Equal specificity, and the SDK's comes later, so it wins. A button inside
+   * this scope stayed ibl blue even with --primary correctly set to ink.
+   * Overriding the parallel variables too is what actually recolours it.
+   *
+   * Navbar variables are deliberately NOT remapped — the navbar sits outside
+   * this scope and keeps ibl.ai's brand. */
+  --primary-color: var(--sb-ink);
+  --border-color: var(--sb-rule);
+  --text-primary: var(--sb-ink);
+  --text-secondary: var(--sb-margin);
+  --accent-color: var(--sb-mark-wash);
+  --hover-bg: var(--sb-mark-wash);
+
   background-color: var(--sb-paper);
   color: var(--sb-ink);
   font-family: var(--sb-font-system);

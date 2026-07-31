@@ -2,18 +2,20 @@
 
 import { UserProfileDropdown } from '@iblai/iblai-js/web-containers/next';
 
+import type { IblTenant } from '@/lib/iblai/session';
+
 interface UserProfileButtonProps {
   username?: string;
   email: string;
   mainPlatformKey: string;
   isAdmin: boolean;
   tenantKey: string;
-  currentTenant?: any;
-  userTenants?: any[];
+  currentTenant?: IblTenant;
+  userTenants?: IblTenant[];
   authURL: string;
   onLogout: () => void;
   onTenantChange: (newTenantKey: string) => void;
-  onTenantUpdate?: (tenant: any) => void;
+  onTenantUpdate?: (tenant: IblTenant) => void;
   onAccountDeleted?: () => void;
 }
 

@@ -1,17 +1,18 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { NavBar, type NavLink } from '@/components/navbar/nav-bar';
 import {
   NavigationDrawer,
   type NavItem,
 } from '@/components/navbar/navigation-drawer';
 import config from '@/lib/iblai/config';
-import { resolveAppTenant } from '@/lib/iblai/tenant';
+import { useIblSession } from '@/lib/iblai/session';
 import { handleLogout } from '@/lib/iblai/auth-utils';
 
 const NAV_LINKS: NavLink[] = [
   { name: 'Home', href: '/', segment: null },
+  { name: 'Quiz', href: '/quiz', segment: 'quiz' },
   { name: 'Profile', href: '/profile', segment: 'profile' },
   { name: 'Account', href: '/account', segment: 'account' },
 ];
@@ -27,39 +28,8 @@ export default function AppLayout({
   children: React.ReactNode;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [tenantKey, setTenantKey] = useState('');
-  const [username, setUsername] = useState<string | undefined>();
-  const [email, setEmail] = useState('');
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [tenants, setTenants] = useState<any[]>([]);
-  const [currentTenant, setCurrentTenant] = useState<any>(undefined);
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem('userData');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        setUsername(parsed.user_nicename ?? parsed.username ?? undefined);
-        setEmail(parsed.user_email ?? parsed.email ?? '');
-      }
-    } catch {}
-
-    const resolved = resolveAppTenant();
-    setTenantKey(resolved);
-
-    try {
-      const tenantsRaw = localStorage.getItem('tenants');
-      if (tenantsRaw) {
-        const parsed = JSON.parse(tenantsRaw);
-        setTenants(parsed);
-        const match = parsed.find((t: any) => t.key === resolved);
-        if (match) {
-          setIsAdmin(!!match.is_admin);
-          setCurrentTenant(match);
-        }
-      }
-    } catch {}
-  }, []);
+  const { tenantKey, username, email, isAdmin, tenants, currentTenant } =
+    useIblSession();
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-white">
@@ -67,12 +37,12 @@ export default function AppLayout({
         onMenuClick={() => setDrawerOpen((prev) => !prev)}
         links={NAV_LINKS}
         tenantKey={tenantKey}
-        username={username}
+        username={username || undefined}
         email={email}
         mainPlatformKey={config.mainTenantKey()}
         isAdmin={isAdmin}
         currentTenant={currentTenant}
-        userTenants={tenants}
+        userTenants={[...tenants]}
         authURL={config.authUrl()}
         onLogout={() => handleLogout()}
         onTenantChange={(key: string) => {

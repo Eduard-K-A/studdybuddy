@@ -105,9 +105,26 @@ export function IblaiProviders({ children }: { children: ReactNode }) {
           skip={isSsoRoute}
           currentTenant={tenantKey}
           requestedTenant={tenantKey}
-          saveCurrentTenant={(t: any) => {
-            const key = typeof t === "string" ? t : t?.key ?? String(t);
-            localStorage.setItem("current_tenant", key);
+          saveCurrentTenant={(t: unknown) => {
+            const key =
+              typeof t === "string"
+                ? t
+                : ((t as { key?: string } | null)?.key ?? String(t));
+
+            // `current_tenant` MUST be the JSON object shape, not a bare key.
+            //
+            // The SDK mirrors this value into a cookie as {"key":"…"} and
+            // compares cookie against localStorage on an interval. Writing a
+            // bare string here made every poll see a difference, decide
+            // "another SPA changed the tenant", and redirect to the auth SPA —
+            // an infinite login bounce on any session restore where the cookie
+            // was already warm.
+            //
+            // app/(app)/layout.tsx already reads this back with
+            // JSON.parse(...)?.key, so the object shape is what the rest of the
+            // app expects too. `tenant` stays a bare key: resolveAppTenant()
+            // reads that one as a plain string.
+            localStorage.setItem("current_tenant", JSON.stringify({ key }));
             localStorage.setItem("tenant", key);
 
             // If the SDK resolved a different tenant than what the app

@@ -8,6 +8,7 @@ import { NotificationDropdown } from '@iblai/iblai-js/web-containers';
 import { useCallback } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import type { IblTenant } from '@/lib/iblai/session';
 
 export interface NavLink {
   name: string;
@@ -23,12 +24,12 @@ interface NavBarProps {
   email: string;
   mainPlatformKey: string;
   isAdmin: boolean;
-  currentTenant?: any;
-  userTenants?: any[];
+  currentTenant?: IblTenant;
+  userTenants?: IblTenant[];
   authURL: string;
   onLogout: () => void;
   onTenantChange: (key: string) => void;
-  onTenantUpdate?: (tenant: any) => void;
+  onTenantUpdate?: (tenant: IblTenant) => void;
   onAccountDeleted?: () => void;
   showNotifications?: boolean;
   showProfileDropdown?: boolean;

@@ -23,6 +23,9 @@ import {
   filesReducer,
 } from "@iblai/iblai-js/web-utils";
 
+import { quizApi } from "./quiz-api";
+import { quizReducer } from "./quiz-slice";
+
 export const iblaiStore = configureStore({
   reducer: {
     // Core API cache (auth, tenant, user metadata, etc.)
@@ -36,11 +39,19 @@ export const iblaiStore = configureStore({
 
     // File upload state
     files: filesReducer,
+
+    // StudyBuddy: quiz backend cache + session state.
+    // Registered on the SDK's own store rather than a second one — a separate
+    // store would sit under a different ReactReduxContext and the SDK's RTK
+    // Query hooks would silently return undefined.
+    [quizApi.reducerPath]: quizApi.reducer,
+    quiz: quizReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({ serializableCheck: false })
       .concat(coreApiSlice.middleware)
-      .concat(...mentorMiddleware),
+      .concat(...mentorMiddleware)
+      .concat(quizApi.middleware),
 });
 
 export type IblaiRootState = ReturnType<typeof iblaiStore.getState>;

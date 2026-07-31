@@ -12,6 +12,14 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored skill mirrors written by `npx skills add iblai/vibe`. Third-party
+    // reference material, gitignored, and not ours to fix.
+    ".agents/**",
+    ".claude/**",
+    ".codebuddy/**",
+    ".kiro/**",
+    ".trae/**",
+    ".windsurf/**",
   ]),
 ]);
 
