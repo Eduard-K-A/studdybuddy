@@ -25,7 +25,7 @@ Honest accounting of what is and isn't done:
 
 | Success criterion | Status |
 |---|---|
-| Public repo, conventional commits | ✅ 12 commits |
+| Public repo, conventional commits | ✅ 16 commits |
 | Working quiz flow | ⚠️ works, but **offline** — the ibl.ai platform has no credits (see below) |
 | Deliberate visual identity | ✅ six-token system, documented |
 | Deployed URL with working SSO | ✅ [live on Vercel](https://studdybuddy-lemon.vercel.app), SSO verified on the deployed origin |
