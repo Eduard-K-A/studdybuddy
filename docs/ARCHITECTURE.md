@@ -681,7 +681,7 @@ always the right reading. An evaluation has no safe prose fallback, so it become
 ## 11. Testing discipline
 
 ```bash
-pnpm test          # 64 Vitest unit tests
+pnpm test          # 71 Vitest unit tests
 pnpm test:e2e      # 11 Playwright tests (needs e2e/.env.development)
 pnpm lint          # 0 errors
 pnpm build

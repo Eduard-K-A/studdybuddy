@@ -13,7 +13,7 @@ Built as the bonus for the ibl.ai Software Engineer application: scaffolded with
 |---|---|
 | **Live URL** | **https://studdybuddy-lemon.vercel.app** |
 | **Baseline commit** | [`b072976`](../../commit/b072976) — the untouched scaffold |
-| **Tests** | 64 unit (Vitest) · 11 E2E (Playwright), incl. two axe scans |
+| **Tests** | 71 unit (Vitest) · 11 E2E (Playwright), incl. two axe scans |
 | **Lighthouse** | Accessibility **100** · SEO **100** · Best Practices **77** · Performance **41** ([why](#performance)) |
 | **Time spent** | roughly six hours |
 
@@ -30,7 +30,7 @@ Honest accounting of what is and isn't done:
 | Deliberate visual identity | ✅ six-token system, documented |
 | Deployed URL with working SSO | ✅ [live on Vercel](https://studdybuddy-lemon.vercel.app), SSO verified on the deployed origin |
 | Native desktop build | ⚠️ scaffolded, **not built** — no Rust toolchain ([why](docs/DESKTOP_BUILD.md)) |
-| Vitest + Playwright + axe | ✅ 64 + 11 green, zero critical/serious a11y violations |
+| Vitest + Playwright + axe | ✅ 71 + 11 green, zero critical/serious a11y violations |
 | Performance measured | ⚠️ measured and diagnosed, **not fixed** — Performance 41 ([why](#performance)) |
 | Debugging narrative | ✅ below |
 
@@ -327,6 +327,48 @@ only matches names *starting* with `.env`. `iblai.env` holds the platform API
 key. On a public repo it would have been committed. Caught before any real value
 was entered; fixed in the second commit.
 
+### 7. One invisible character took the deployed quiz down
+
+**Symptom:** every `/api/quiz` call on the deployed origin returned **502**,
+while localhost worked. The body was `"The agent could not be reached."` in
+0.5 s — too fast for a timeout, and specifically the branch for an error that
+was *not* one of the agent's own typed failures.
+
+**First finding was a gap in my own code, not the bug.** The handler caught the
+error and never logged it, so nothing recorded why a live call failed. A
+production failure was unobservable by construction. Adding one `console.error`
+was the entire difference between guessing and knowing.
+
+**Cause**, straight out of the Vercel runtime log:
+
+```
+TypeError: Cannot convert argument to a ByteString because the character
+at index 29 has a value of 8212 which is greater than 255
+```
+
+8212 is **U+2014, an em dash**. HTTP header values are ByteString — latin-1, one
+byte per character — so `fetch` throws before sending anything. The header is
+`Authorization: Api-Token <token>`; `"Api-Token "` is 10 characters, so index 29
+is character 20 of `IBLAI_API_KEY` itself. The deployed environment variable had
+an em dash where a hyphen belonged, from smart punctuation somewhere in the
+paste path.
+
+That explains every symptom at once: instant failure (no request was ever made),
+fine on localhost (`.env.local` was intact), and not a 401 (the platform never
+saw it).
+
+**Fix, in two parts.** `liveAgent()` now rejects a credential containing any
+character above U+00FF and logs *which variable and which index*, so the same
+mistake names itself. And the handler now degrades to the offline agent on **any**
+live failure rather than only on credits — a working fallback was sitting one
+line below while the session dead-ended. Responses carry a `degraded` category so
+a degraded session stays diagnosable from outside.
+
+**Lesson:** I had assumed a serverless-runtime difference — a missing `WebSocket`
+global was my leading hypothesis, and it was wrong. Making the code *report* the
+category instead of asserting the cause is what turned it up. The bug was not in
+the runtime, the SDK, or the network. It was one character in a settings field.
+
 ---
 
 ## Auth notes
@@ -352,7 +394,7 @@ refresh-token rotation, JWKS verification, SAML.
 ## Testing
 
 ```bash
-pnpm test          # 64 Vitest unit tests
+pnpm test          # 71 Vitest unit tests
 pnpm test:e2e      # 11 Playwright tests (needs e2e/.env.development)
 pnpm lint          # 0 errors
 pnpm build

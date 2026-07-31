@@ -19,6 +19,7 @@ import {
   AgentUnavailableError,
   IblAgent,
   StubAgent,
+  firstUnsafeHeaderIndex,
   type QuizAgent,
 } from "@/lib/quiz/agent";
 import type { Evaluation, Material, Question } from "@/lib/quiz/types";
@@ -107,6 +108,23 @@ function liveAgent(username: string): IblAgent | null {
 
   if (!tenant || !mentorId || !token) return null;
   if (/^your-/.test(tenant) || /^your-/.test(token)) return null;
+
+  // A credential pasted through smart punctuation cannot go in a header at all
+  // — header values are latin-1, and `fetch` throws a TypeError naming a
+  // character offset and nothing else, before any request is made. This
+  // happened in production: the deployed IBLAI_API_KEY had an em dash where a
+  // hyphen belonged, and every /api/quiz call 502'd while working locally.
+  // Named here, it is a one-line fix instead of a log-archaeology exercise.
+  const unsafe = firstUnsafeHeaderIndex(token);
+  if (unsafe !== -1) {
+    console.error(
+      `[quiz] IBLAI_API_KEY has a character at index ${unsafe} that cannot be ` +
+        `sent in an HTTP header (code ${token.charCodeAt(unsafe)}). It was ` +
+        `probably pasted through smart punctuation — an em dash (8212) for a ` +
+        `hyphen. Re-paste the value. Running offline until then.`,
+    );
+    return null;
+  }
 
   return new IblAgent({ tenant, mentorId, token, username });
 }

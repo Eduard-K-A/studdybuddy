@@ -53,6 +53,36 @@ export interface IblAgentConfig {
 const DEFAULT_API = "https://api.iblai.app";
 const DEFAULT_WS = "wss://asgi.data.iblai.app/ws/langflow/";
 
+/**
+ * Index of the first character that cannot travel in an HTTP header, or -1.
+ *
+ * Header values are ByteString — latin-1, one byte per character. A value
+ * carrying anything above U+00FF makes `fetch` throw
+ *
+ *   TypeError: Cannot convert argument to a ByteString because the character
+ *   at index N has a value of 8212 which is greater than 255
+ *
+ * before a single byte goes over the wire. 8212 is U+2014, an em dash.
+ *
+ * This is precisely what a credential pasted through smart punctuation looks
+ * like — an em dash where a hyphen belongs. It cost a production outage here:
+ * the deployed `IBLAI_API_KEY` had one, so building `Authorization` threw a
+ * TypeError that named a character offset and nothing else. Checking the value
+ * up front lets the failure name the variable instead.
+ */
+export function firstUnsafeHeaderIndex(value: string): number {
+  // Exactly the ByteString condition: any code unit above 255. A loop rather
+  // than a regex so the check carries no non-ASCII literal of its own.
+  for (let i = 0; i < value.length; i += 1) {
+    if (value.charCodeAt(i) > 255) return i;
+  }
+  return -1;
+}
+
+export function isHeaderSafe(value: string): boolean {
+  return firstUnsafeHeaderIndex(value) === -1;
+}
+
 interface Frame {
   readonly detail?: string;
   readonly error?: string;
