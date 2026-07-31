@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { RETURN_TO_COOKIE } from "@/lib/return-to";
+import { SDK_SESSION_COOKIE, SESSION_HINT_COOKIE } from "@/lib/session-hint";
 
 /**
  * Route protection for /quiz. This IS Next.js middleware.
@@ -14,10 +15,15 @@ import { RETURN_TO_COOKIE } from "@/lib/return-to";
  * boundary. See docs/AUTH_NOTES.md for the full reasoning.
  *
  * The ibl.ai session lives in localStorage, which is never transmitted, so
- * middleware cannot see it. What middleware CAN see is `ibl_user_data`, a
- * cookie the SDK mirrors the session into — but that cookie is written by
- * client-side JavaScript and is not httpOnly, so anyone can set it by hand.
- * Its presence proves nothing.
+ * middleware cannot see it. What middleware CAN see is a cookie mirroring it —
+ * but such a cookie is written by client-side JavaScript and is not httpOnly,
+ * so anyone can set it by hand. Its presence proves nothing.
+ *
+ * Two are accepted. `sb_session` is ours and host-only. `ibl_user_data` is the
+ * SDK's, and is NOT reliable: the SDK scopes it to the last two labels of the
+ * hostname, which yields `.vercel.app` here — a public suffix, so the browser
+ * drops it and the cookie never arrives. That bug is invisible on localhost and
+ * broke every deployed /quiz navigation. Full write-up in `lib/session-hint.ts`.
  *
  * What this buys, honestly:
  *   - an unauthenticated visitor is redirected before the client bundle loads,
@@ -32,16 +38,17 @@ import { RETURN_TO_COOKIE } from "@/lib/return-to";
  *     platform token server-side
  */
 
-/** Set by the SDK from the session. Non-httpOnly and client-written. */
-const SESSION_HINT_COOKIE = "ibl_user_data";
-
 const PROTECTED = [/^\/quiz(?:\/|$)/];
 
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
   if (!PROTECTED.some((p) => p.test(pathname))) return NextResponse.next();
-  if (request.cookies.has(SESSION_HINT_COOKIE)) return NextResponse.next();
+
+  const hasHint =
+    request.cookies.has(SESSION_HINT_COOKIE) ||
+    request.cookies.has(SDK_SESSION_COOKIE);
+  if (hasHint) return NextResponse.next();
 
   // Send them to the app root, where AuthProvider owns the real token check and
   // starts the SSO flow. Deliberately NOT redirecting straight to the auth SPA:

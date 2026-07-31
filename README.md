@@ -65,7 +65,9 @@ pages, the Vitest and Playwright harnesses, and the Tauri templates.
 | Tests | `__tests__/quiz-*.test.ts`, `__tests__/return-to.test.ts`, `e2e/journeys/{quiz,middleware}.journey.spec.ts` |
 | Docs | `docs/{AUTH_NOTES,AGENT_PROTOCOL,DESKTOP_BUILD}.md` |
 
-I also fixed four bugs **in** the scaffold — those are in the narrative below.
+I also fixed five bugs **in** the scaffold and SDK — those are in the narrative
+below. Two of them (the Tailwind symlink, the cookie domain) only reproduce on
+particular platforms, which is what made them worth writing up.
 
 ---
 
@@ -205,7 +207,45 @@ Two process lessons from this one:
   which is exactly what makes it sharp — and it's now a finding in
   [AUTH_NOTES.md](docs/AUTH_NOTES.md).
 
-### 5. A token-leak bug in the starter
+### 5. `/quiz` worked locally and 307'd forever once deployed
+
+**Symptom:** every `/quiz` navigation on the Vercel URL bounced to `/`. Identical
+build, identical session, worked perfectly on localhost.
+
+**Checked:** the Lighthouse network log listed the SDK's five `ibl_*` cookies as
+**third-party**, attributed to `ibl.ai` rather than to my own origin — which
+meant they were not on my origin at all. `proxy.ts` gated `/quiz` on exactly one
+of them, `ibl_user_data`. So I read how the SDK sets it:
+
+```js
+const parts = hostname.split('.');
+if (parts.length === 2) return hostname;
+if (parts.length > 2)   return `.${parts.slice(-2).join('.')}`;
+```
+
+**Cause:** for `studdybuddy-lemon.vercel.app` that returns **`.vercel.app`**, so
+the SDK writes `domain=.vercel.app`. `vercel.app` is on the **Public Suffix
+List**, and browsers reject cookies scoped to a public suffix — otherwise one
+deployment could set a cookie every other Vercel app could read. The cookie was
+silently dropped, so middleware never saw a session and redirected every time.
+localhost hits the function's early return and keeps the hostname intact, which
+is precisely why the bug could not appear in development.
+
+**Fix:** stop depending on a cookie the SDK cannot set here. `SessionHint` writes
+`sb_session` with **no domain attribute** — host-only, scoped to the exact
+origin, and immune to the public-suffix rule. Middleware accepts either cookie,
+so the SDK's still short-circuits a hop on a normal registrable domain.
+
+**Why it generalises:** the SDK's heuristic assumes the registrable domain is
+always the last two labels. That is wrong for every multi-label public suffix —
+`*.vercel.app`, `*.github.io`, `*.pages.dev`, `*.co.uk`. Any of those deploy
+targets hits this, so it is a portability bug rather than a Vercel quirk.
+
+**Lesson:** "works locally, fails deployed" was worth taking literally. The
+difference was not configuration or environment variables — it was a branch in
+someone else's code that only executes when the hostname has three labels.
+
+### 6. A token-leak bug in the starter
 
 `.gitignore` has `.env*`, which does **not** match `iblai.env` — that pattern
 only matches names *starting* with `.env`. `iblai.env` holds the platform API

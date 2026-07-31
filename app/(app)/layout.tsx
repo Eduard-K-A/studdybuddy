@@ -10,6 +10,7 @@ import config from '@/lib/iblai/config';
 import { useIblSession } from '@/lib/iblai/session';
 import { handleLogout } from '@/lib/iblai/auth-utils';
 import { ReturnTo } from '@/components/return-to';
+import { SessionHint } from '@/components/session-hint';
 
 const NAV_LINKS: NavLink[] = [
   { name: 'Home', href: '/', segment: null },
@@ -34,6 +35,11 @@ export default function AppLayout({
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-white">
+      {/* Mirrors the localStorage session into a host-only cookie so proxy.ts
+          can see it at all. The SDK's own cookie is dropped by the browser on
+          *.vercel.app — see lib/session-hint.ts. */}
+      <SessionHint authenticated={ready && Boolean(username)} />
+
       {/* Restores the destination middleware parked before the SSO round trip. */}
       <ReturnTo authenticated={ready && Boolean(username)} />
 
