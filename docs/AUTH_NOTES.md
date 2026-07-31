@@ -107,7 +107,13 @@ httpOnly cookies would require a same-origin backend to proxy every call, which
 this architecture does not have. The cost is that one XSS anywhere on the origin
 yields both tokens.
 
-## 3. Why `middleware.ts` is not a security boundary
+## 3. Why the middleware is not a security boundary
+
+> The file is `proxy.ts`, not `middleware.ts`. Next 16 renamed the convention —
+> same feature and same `config.matcher`, with the export renamed from
+> `middleware` to `proxy`. Keeping the old name emits a deprecation warning on
+> every build.
+
 
 The plan called for middleware gating `/quiz` on the session. **That cannot work
 as stated**, and understanding why is the point:
@@ -119,7 +125,7 @@ What it *can* see is `ibl_user_data` — but that cookie is written by client-si
 JavaScript and is not httpOnly, so anyone can set it from the console. Its
 presence proves nothing.
 
-So `middleware.ts` here is deliberately scoped as a **UX optimisation**:
+So `proxy.ts` here is deliberately scoped as a **UX optimisation**:
 
 - an unauthenticated visitor is redirected before the client bundle loads,
   instead of flashing the quiz shell and bouncing

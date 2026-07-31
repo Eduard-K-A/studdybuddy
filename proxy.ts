@@ -3,7 +3,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import { RETURN_TO_COOKIE } from "@/lib/return-to";
 
 /**
- * Route protection for /quiz.
+ * Route protection for /quiz. This IS Next.js middleware.
+ *
+ * Next 16 renamed the `middleware` file convention to `proxy` — same feature,
+ * same execution point in front of the app, same `config.matcher`; the function
+ * export is now `proxy` instead of `middleware`. Keeping the old name emits a
+ * deprecation warning on every build, so this uses the current convention.
  *
  * READ THIS BEFORE TRUSTING IT: this is a UX optimisation, NOT a security
  * boundary. See docs/AUTH_NOTES.md for the full reasoning.
@@ -32,7 +37,7 @@ const SESSION_HINT_COOKIE = "ibl_user_data";
 
 const PROTECTED = [/^\/quiz(?:\/|$)/];
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
   if (!PROTECTED.some((p) => p.test(pathname))) return NextResponse.next();
