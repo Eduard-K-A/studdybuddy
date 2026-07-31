@@ -30,6 +30,16 @@ export const runtime = "nodejs";
  *  instead of passing stub grading off as real evaluation. */
 export type AgentMode = "live" | "offline";
 
+/** Why the live agent was not used, when it was configured but failed. Echoed
+ *  in the response so a degraded session is diagnosable from the outside — the
+ *  category only, never a stack or an internal message. */
+export type DegradeReason =
+  | "credits"
+  | "auth"
+  | "timeout"
+  | "transport"
+  | "unknown";
+
 interface AskBody {
   readonly action: "ask";
   readonly material: Material;
@@ -130,45 +140,60 @@ export async function POST(request: Request): Promise<Response> {
   const forceStub = process.env.QUIZ_AGENT === "stub";
   const live = forceStub ? null : liveAgent(username);
 
+  /** Set when a configured live agent failed and the offline one stood in. */
+  let degraded: DegradeReason | null = null;
+
   const run = async (agent: QuizAgent, mode: AgentMode) => {
     const rawReply =
       body.action === "ask"
         ? await agent.ask(context, body.askedPrompts ?? [])
         : await agent.evaluate(context, body.question, body.answer);
 
+    const base = {
+      mode,
+      truncated: context.truncated,
+      ...(degraded ? { degraded } : {}),
+    };
+
     if (body.action === "ask") {
       const question: Question | null = parseQuestion(rawReply, crypto.randomUUID());
       if (!question) throw new AgentUnavailableError("Empty reply.", "transport");
-      return NextResponse.json({ mode, truncated: context.truncated, question });
+      return NextResponse.json({ ...base, question });
     }
 
     const evaluation: Evaluation | null = parseEvaluation(rawReply, body.question.id);
     if (!evaluation) throw new AgentUnavailableError("Empty reply.", "transport");
-    return NextResponse.json({ mode, truncated: context.truncated, evaluation });
+    return NextResponse.json({ ...base, evaluation });
   };
 
   if (live) {
     try {
       return await run(live, "live");
     } catch (error) {
-      // A depleted platform is the expected failure here. Fall through to the
-      // offline agent rather than dead-ending the session — the response is
-      // labelled `offline`, and the UI says so plainly.
-      const isCredits =
-        error instanceof AgentUnavailableError && error.reason === "credits";
-      if (!isCredits) {
-        const message =
-          error instanceof AgentUnavailableError
-            ? error.message
-            : "The agent could not be reached.";
-        return NextResponse.json({ error: message }, { status: 502 });
-      }
+      // Log the real error. This is the ONLY record of why a live call failed —
+      // the client is deliberately told a category, not an internal message, so
+      // without this line a production failure leaves nothing to debug at all.
+      console.error("[quiz] live agent failed:", error);
+
+      // Degrade for ANY live failure, not only credits.
+      //
+      // This used to fall through on `credits` and return 502 on everything
+      // else, which dead-ended the session on the deployed origin while a
+      // working offline agent sat unused one line below. A transport fault
+      // should cost the learner a weaker question, not the whole session.
+      // Nothing is misrepresented: the response is labelled `offline`, the UI
+      // says so, and `degraded` names the category.
+      degraded =
+        error instanceof AgentUnavailableError ? error.reason : "unknown";
     }
   }
 
   try {
     return await run(new StubAgent(), "offline");
-  } catch {
+  } catch (error) {
+    // Reaching here means the material defeated even the deterministic agent,
+    // so it is a real bug rather than an expected degradation.
+    console.error("[quiz] offline agent failed:", error);
     return NextResponse.json(
       { error: "Could not build a question from that material." },
       { status: 500 },

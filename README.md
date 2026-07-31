@@ -38,8 +38,9 @@ Honest accounting of what is and isn't done:
 **-65 credits**, so the live agent refuses every request. Rather than fake a
 demo, the real transport is implemented and a deterministic offline agent stands
 in behind the same interface. Every API response carries `mode: "live" |
-"offline"`, and the UI labels offline sessions in the margin rail — stub grading
-is never presented as real evaluation.
+"offline"`, plus a `degraded` category naming why the live agent was skipped,
+and the UI labels offline sessions in the margin rail — stub grading is never
+presented as real evaluation.
 
 ---
 
@@ -64,7 +65,7 @@ pages, the Vitest and Playwright harnesses, and the Tauri templates.
 | Route gate | `proxy.ts`, `components/return-to.tsx`, `lib/return-to.ts` |
 | Session hook | `lib/iblai/session.ts` |
 | Tests | `__tests__/quiz-*.test.ts`, `__tests__/return-to.test.ts`, `e2e/journeys/{quiz,middleware}.journey.spec.ts` |
-| Docs | `docs/{AUTH_NOTES,AGENT_PROTOCOL,DESKTOP_BUILD}.md` |
+| Docs | `docs/{ARCHITECTURE,AUTH_NOTES,AGENT_PROTOCOL,DESKTOP_BUILD}.md` |
 
 I also fixed five bugs **in** the scaffold and SDK — those are in the narrative
 below. Two of them (the Tailwind symlink, the cookie domain) only reproduce on
@@ -103,6 +104,13 @@ desktop build loads a remote origin rather than a static export
 
 The domain layer (`lib/quiz/`) is transport-agnostic and pure, which is what let
 it be built and tested before the transport was even known.
+
+**[ARCHITECTURE.md](docs/ARCHITECTURE.md)** is the full technical walkthrough:
+the server/client boundary and why it sits so high, both route handlers, the
+Next 16 `proxy.ts` middleware, the three data-fetching layers, Redux store
+composition and the single-store constraint, session management, the ingestion
+pipeline, the agent layer, and the testing discipline. It also states plainly
+which auth capabilities are **not** in this codebase.
 
 ---
 

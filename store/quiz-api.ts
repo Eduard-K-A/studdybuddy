@@ -16,6 +16,15 @@ import type { Evaluation, Material, Question } from "@/lib/quiz/types";
 /** Which agent produced a reply. Mirrors the route handler's contract. */
 export type AgentMode = "live" | "offline";
 
+/** Why the live agent was skipped, when it was configured but failed. Present
+ *  only on a degraded reply. Mirrors `DegradeReason` in the route handler. */
+export type DegradeReason =
+  | "credits"
+  | "auth"
+  | "timeout"
+  | "transport"
+  | "unknown";
+
 export interface AskRequest {
   readonly material: Material;
   readonly askedPrompts: readonly string[];
@@ -25,6 +34,7 @@ export interface AskRequest {
 export interface AskResponse {
   readonly mode: AgentMode;
   readonly truncated: boolean;
+  readonly degraded?: DegradeReason;
   readonly question: Question;
 }
 
@@ -38,6 +48,7 @@ export interface EvaluateRequest {
 export interface EvaluateResponse {
   readonly mode: AgentMode;
   readonly truncated: boolean;
+  readonly degraded?: DegradeReason;
   readonly evaluation: Evaluation;
 }
 

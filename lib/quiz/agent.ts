@@ -106,7 +106,19 @@ export class IblAgent implements QuizAgent {
       );
     }
 
-    const body: unknown = await res.json();
+    // A 2xx that is not JSON (an HTML error page from a proxy, say) would throw
+    // a bare SyntaxError here, which the route cannot classify and reports as
+    // an unknown failure. Name it instead.
+    let body: unknown;
+    try {
+      body = await res.json();
+    } catch {
+      throw new AgentUnavailableError(
+        "Session response was not JSON.",
+        "transport",
+      );
+    }
+
     const sessionId =
       typeof body === "object" && body !== null
         ? (body as { session_id?: unknown }).session_id
@@ -120,11 +132,28 @@ export class IblAgent implements QuizAgent {
 
   private async send(prompt: string): Promise<string> {
     const { tenant, mentorId, username, token } = this.cfg;
+
+    // Node only exposes a global WebSocket from 22.4 onward, and serverless
+    // runtimes do not all ship one. Constructing it blind throws a bare
+    // ReferenceError that carries no reason the caller can act on — and it
+    // cannot reproduce locally on a Node build that has the global.
+    const WebSocketCtor: typeof WebSocket | undefined =
+      typeof globalThis.WebSocket === "function"
+        ? globalThis.WebSocket
+        : undefined;
+
+    if (!WebSocketCtor) {
+      throw new AgentUnavailableError(
+        "This runtime has no WebSocket global.",
+        "transport",
+      );
+    }
+
     const sessionId = await this.createSession();
     const timeoutMs = this.cfg.timeoutMs ?? 45_000;
 
     return new Promise<string>((resolve, reject) => {
-      const ws = new WebSocket(this.cfg.wsUrl ?? DEFAULT_WS);
+      const ws = new WebSocketCtor(this.cfg.wsUrl ?? DEFAULT_WS);
       const chunks: string[] = [];
       let settled = false;
 
