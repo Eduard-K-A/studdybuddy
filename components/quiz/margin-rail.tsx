@@ -16,11 +16,15 @@ import { VerdictBadge } from "./verdict";
 export function MarginRail({
   evaluation,
   score,
+  total,
   pending,
   offline,
 }: {
   evaluation: Evaluation | undefined;
   score: Score;
+  /** Questions in the planned run, so the tally reads as progress toward an
+   *  end rather than as an open-ended count. */
+  total: number;
   pending: boolean;
   offline: boolean;
 }) {
@@ -35,7 +39,7 @@ export function MarginRail({
       className="flex flex-col gap-5 border-t pt-5 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-6"
       style={{ borderColor: "var(--sb-rule)" }}
     >
-      <ScoreLine score={score} />
+      <ScoreLine score={score} total={total} />
 
       {pending && (
         <p
@@ -105,7 +109,7 @@ export function MarginRail({
   );
 }
 
-function ScoreLine({ score }: { score: Score }) {
+function ScoreLine({ score, total }: { score: Score; total: number }) {
   return (
     <div className="flex flex-col gap-1">
       <span
@@ -120,8 +124,15 @@ function ScoreLine({ score }: { score: Score }) {
       >
         {score.correct} correct · {score.partial} nearly · {score.revisit} to revisit
         <span className="sr-only">
-          {` out of ${score.answered} answered`}
+          {` out of ${score.answered} answered, in a quiz of ${total}`}
         </span>
+      </span>
+      <span
+        className="text-[length:var(--sb-text-meta)]"
+        style={{ fontFamily: "var(--sb-font-meta)", color: "var(--sb-margin)" }}
+        aria-hidden="true"
+      >
+        {score.answered} of {total} answered
       </span>
     </div>
   );

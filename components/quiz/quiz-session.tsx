@@ -1,17 +1,19 @@
 "use client";
 
-import {
-  useCallback,
-  useId,
-  useMemo,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { useDispatch, useSelector } from "react-redux";
 
 import { Button } from "@/components/ui/button";
-import { computeScore, evaluationFor } from "@/lib/quiz/score";
-import type { Material } from "@/lib/quiz/types";
+import { FORMAT_DESCRIPTIONS } from "@/lib/quiz/plan";
+import {
+  askedQuestions,
+  computeScore,
+  evaluationFor,
+  isComplete,
+  questionNumber,
+} from "@/lib/quiz/score";
+import type { Material, QuizPlan } from "@/lib/quiz/types";
+import { isChoiceFormat } from "@/lib/quiz/types";
 import {
   useAskQuestionMutation,
   useEvaluateAnswerMutation,
@@ -21,11 +23,14 @@ import {
   materialSet,
   questionPresented,
   sessionReset,
+  sessionRestarted,
   type QuizSessionState,
 } from "@/store/quiz-slice";
 import type { IblaiRootState } from "@/store/iblai-store";
+import { AnswerField } from "./answer-field";
 import { MarginRail } from "./margin-rail";
 import { MaterialForm } from "./material-form";
+import { QuizSummary } from "./quiz-summary";
 
 function readIblUsername(): string | undefined {
   try {
@@ -66,7 +71,6 @@ function useIblUsername(): string | undefined {
 
 export function QuizSession() {
   const dispatch = useDispatch();
-  const answerId = useId();
   const username = useIblUsername();
 
   const quiz = useSelector<IblaiRootState, QuizSessionState>(
@@ -79,22 +83,19 @@ export function QuizSession() {
   const [answer, setAnswer] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const askedPrompts = useMemo(
-    () => quiz.evaluations.map((e) => e.questionId),
-    [quiz.evaluations],
-  );
-
   const score = useMemo(() => computeScore(quiz.evaluations), [quiz.evaluations]);
   const currentEvaluation = evaluationFor(quiz, quiz.current?.id);
+  const complete = isComplete(quiz);
 
   const nextQuestion = useCallback(
-    async (material: Material, asked: readonly string[]) => {
+    async (material: Material, plan: QuizPlan, asked: readonly string[]) => {
       setError(null);
       setAnswer("");
       try {
         const result = await askQuestion({
           material,
-          askedPrompts: asked,
+          plan,
+          askedQuestions: asked,
           username,
         }).unwrap();
         dispatch(
@@ -102,6 +103,7 @@ export function QuizSession() {
             question: result.question,
             mode: result.mode,
             truncated: result.truncated,
+            planLength: result.planLength,
           }),
         );
       } catch {
@@ -112,12 +114,24 @@ export function QuizSession() {
   );
 
   const handleMaterial = useCallback(
-    (material: Material) => {
-      dispatch(materialSet(material));
-      void nextQuestion(material, []);
+    (material: Material, plan: QuizPlan) => {
+      dispatch(materialSet({ material, plan }));
+      void nextQuestion(material, plan, []);
     },
     [dispatch, nextQuestion],
   );
+
+  // The dependency lists below name `quiz.material` / `quiz.current` rather
+  // than `quiz`, and must keep doing so. `react-hooks/exhaustive-deps` argues
+  // for the whole object, but the React Compiler infers the member accesses and
+  // fails the build outright when the manual list is broader than what it
+  // derived ("Existing memoization could not be preserved"). A warning from one
+  // rule beats an error from the other.
+  const handleRestart = useCallback(() => {
+    if (!quiz.material) return;
+    dispatch(sessionRestarted());
+    void nextQuestion(quiz.material, quiz.plan, []);
+  }, [dispatch, nextQuestion, quiz.material, quiz.plan]);
 
   const handleCheck = useCallback(async () => {
     if (!quiz.material || !quiz.current) return;
@@ -138,35 +152,79 @@ export function QuizSession() {
   }, [answer, dispatch, evaluateAnswer, quiz.current, quiz.material, username]);
 
   if (!quiz.material || !quiz.current) {
+    return <MaterialForm onSubmit={handleMaterial} pending={ask.isLoading} />;
+  }
+
+  if (complete) {
     return (
-      <MaterialForm
-        onSubmit={handleMaterial}
-        pending={ask.isLoading}
+      <QuizSummary
+        title={quiz.material.title || "your material"}
+        plan={quiz.plan}
+        score={score}
+        history={quiz.history}
+        evaluations={quiz.evaluations}
+        offline={quiz.mode === "offline"}
+        onRestart={handleRestart}
+        onNewMaterial={() => {
+          dispatch(sessionReset());
+          setAnswer("");
+        }}
       />
     );
   }
 
   const checking = evaluation.isLoading;
   const answered = Boolean(currentEvaluation);
+  const number = questionNumber(quiz);
+
+  // A choice question with nothing selected is not an answer — sending it would
+  // spend an agent call to be told "you selected nothing". A written one may be
+  // submitted empty; the rubric handles it and the learner may genuinely want
+  // to say "I don't know".
+  const canCheck =
+    !checking && (!isChoiceFormat(quiz.current.format) || answer !== "");
 
   return (
     <div className="flex flex-col gap-6">
       <header
-        className="flex flex-wrap items-baseline justify-between gap-2 border-b pb-3"
+        className="flex flex-col gap-2 border-b pb-3"
         style={{ borderColor: "var(--sb-rule)" }}
       >
-        <h2
-          className="text-[length:var(--sb-text-margin)]"
-          style={{ color: "var(--sb-margin)" }}
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2
+            className="text-[length:var(--sb-text-margin)]"
+            style={{ color: "var(--sb-margin)" }}
+          >
+            {quiz.material.title || "Untitled material"}
+          </h2>
+          <p
+            className="text-[length:var(--sb-text-meta)]"
+            style={{ fontFamily: "var(--sb-font-meta)", color: "var(--sb-margin)" }}
+          >
+            question {number} of {quiz.plan.length} ·{" "}
+            {FORMAT_DESCRIPTIONS[quiz.current.format].label.toLowerCase()}
+          </p>
+        </div>
+
+        {/* Progress is measured in answers, not in questions shown — the bar
+            should not advance for arriving at a question you have not done. */}
+        <div
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={quiz.plan.length}
+          aria-valuenow={score.answered}
+          aria-valuetext={`${score.answered} of ${quiz.plan.length} answered`}
+          className="h-1 w-full overflow-hidden rounded-full"
+          style={{ backgroundColor: "var(--sb-rule)" }}
         >
-          {quiz.material.title || "Untitled material"}
-        </h2>
-        <p
-          className="text-[length:var(--sb-text-meta)]"
-          style={{ fontFamily: "var(--sb-font-meta)", color: "var(--sb-margin)" }}
-        >
-          question {quiz.asked}
-        </p>
+          <div
+            className="h-full transition-[width] duration-300 motion-reduce:transition-none"
+            style={{
+              width: `${(score.answered / quiz.plan.length) * 100}%`,
+              backgroundColor: "var(--sb-mark)",
+            }}
+          />
+        </div>
       </header>
 
       {quiz.truncated && (
@@ -192,23 +250,12 @@ export function QuizSession() {
             {quiz.current.prompt}
           </h3>
 
-          <div className="flex flex-col gap-2">
-            <label
-              htmlFor={answerId}
-              className="text-[length:var(--sb-text-margin)]"
-            >
-              Your answer
-            </label>
-            <textarea
-              id={answerId}
-              value={answer}
-              onChange={(e) => setAnswer(e.target.value)}
-              rows={6}
-              disabled={answered || checking}
-              className="resize-y rounded-[var(--radius)] border px-3 py-2 text-[length:var(--sb-text-body)] leading-[var(--sb-leading)] disabled:opacity-70"
-              style={{ borderColor: "var(--sb-rule)", backgroundColor: "#fff" }}
-            />
-          </div>
+          <AnswerField
+            question={quiz.current}
+            value={answer}
+            onChange={setAnswer}
+            disabled={answered || checking}
+          />
 
           {error && (
             <p
@@ -223,13 +270,17 @@ export function QuizSession() {
           <div className="flex flex-wrap gap-3">
             {!answered ? (
               // The action keeps its name through the flow.
-              <Button onClick={() => void handleCheck()} disabled={checking}>
+              <Button onClick={() => void handleCheck()} disabled={!canCheck}>
                 {checking ? "Checking…" : "Check my answer"}
               </Button>
             ) : (
               <Button
                 onClick={() =>
-                  void nextQuestion(quiz.material as Material, askedPrompts)
+                  void nextQuestion(
+                    quiz.material as Material,
+                    quiz.plan,
+                    askedQuestions(quiz),
+                  )
                 }
                 disabled={ask.isLoading}
               >
@@ -252,6 +303,7 @@ export function QuizSession() {
         <MarginRail
           evaluation={currentEvaluation}
           score={score}
+          total={quiz.plan.length}
           pending={checking}
           offline={quiz.mode === "offline"}
         />

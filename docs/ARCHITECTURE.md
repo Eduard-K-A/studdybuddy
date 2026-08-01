@@ -120,7 +120,8 @@ Two, both `runtime = "nodejs"`.
 ### `POST /api/quiz` — the agent exchange
 
 ```
-parse body → validate material → build bounded context → build prompt
+parse body → validate material → build bounded context → clamp the plan
+           → resolve this question's format → build prompt
            → call agent → parse reply → typed JSON
 ```
 
@@ -135,6 +136,25 @@ actions with four fields, and the whole validator is 30 lines.
 
 `runtime = "nodejs"` is load-bearing: the agent client opens a WebSocket, which
 the edge runtime does not provide.
+
+**The session plan is settled here, not accepted from the client.** The handler
+is stateless, so the browser sends the plan and the questions already asked with
+every request. Both are treated as input rather than as fact:
+
+- `normalisePlan` clamps the length to `[3, 20]` *and* to what the excerpt can
+  carry (roughly one question per 400 characters). Every question costs an agent
+  call, so an unbounded length from a hand-rolled request is a billing problem,
+  not only a UI one. The clamped value is echoed back as `planLength` so a
+  client that asked for more learns the real number instead of silently running
+  short.
+- An unrecognised format falls back to the default rather than reaching the
+  prompt switch, where it would select a branch by falling through.
+- `askedQuestions.length` is how far through the plan we are. Past the limit the
+  handler returns **409** rather than another question — the UI stops offering
+  "next", but the limit is what bounds the spend, so it cannot live only there.
+- `formatFor(plan, index)` resolves `mixed` to a concrete format by rotation.
+  Rotation rather than randomness: the learner can see the pattern, the E2E
+  suite can assert on it, and two runs of one plan are comparable.
 
 **Degradation is explicit.** `liveAgent()` returns `null` when the tenant key,
 agent id, or token is missing or still a `your-` placeholder. When a configured
@@ -358,7 +378,16 @@ const WEIGHT: Record<Verdict, number> = { correct: 1, partial: 0.5, revisit: 0 }
 ```
 
 Setting new material returns `initialState` rather than merging — carrying a
-score across two different documents would be meaningless.
+score across two different documents would be meaningless. `sessionRestarted`
+does the same while keeping the material and the plan: a second attempt at the
+same quiz is a fresh result, not an improvement to the first.
+
+The slice holds `history: readonly Question[]` rather than an `asked: number`.
+One array then serves three purposes that must not disagree — the progress
+counter, the review list on the summary, and the "don't ask this again" list the
+agent is sent. That last one is why it stores whole questions: the agent needs
+the prompt text, and storing the count is what made it possible to send ids by
+mistake.
 
 **External store — `useSyncExternalStore`.** `localStorage` *is* an external
 store, and reading it in an effect sets state synchronously on mount and
@@ -611,8 +640,10 @@ is told when their material did not fit.
 
 ### Prompt design
 
-Two turns share one preamble so tone and grounding rules cannot drift apart. The
-material is delimited by explicit markers and declared the only permitted source:
+Two turns share one preamble so tone and grounding rules cannot drift apart, and
+the five formats differ **only** in an instruction block and a reply schema —
+which is the reason it is one prompt module rather than five. The material is
+delimited by explicit markers and declared the only permitted source:
 
 ```
 <<<MATERIAL
@@ -624,7 +655,21 @@ MATERIAL>>>
 ```
 
 The ask turn says *ask exactly one question and then stop*; the evaluate turn
-defines the three verdicts explicitly.
+defines the three verdicts explicitly, with a rubric per format — an essay is
+judged on whether ideas are *connected and supported*, a choice question on
+whether the selected option is the right one.
+
+**Multiple choice is never asked for an answer key.** The question object
+travels to the browser, so the ask turn is told not to mark which option is
+correct, and `parseQuestion` strips the quoted passage from a choice question's
+citation — that quote is usually the sentence one option was copied from.
+Correctness is settled on the evaluate turn instead, server-side, against the
+same material. It costs nothing: that round trip was already being made.
+
+The alternative — having the agent return the key at ask time and grading in the
+browser — would need either server-side session state, which this stateless
+handler does not have, or shipping the key to the client, which is the thing
+being avoided.
 
 ### Transport — two implementations, one interface
 
@@ -648,9 +693,35 @@ A `settled` flag plus a shared `finish()` guarantees the promise resolves exactl
 once across the `message` / `error` / `close` / timeout races.
 
 `StubAgent` is not a mock of an LLM and does not pretend to understand anything.
-It builds a question from a real sentence in the excerpt and grades by keyword
-overlap. Its own explanation text says so: *"Offline practice mode: graded by
-keyword overlap with the source passage, not by understanding."*
+It builds questions from real sentences in the excerpt, and its own explanation
+text says exactly how it graded them: *"Offline practice mode: graded by keyword
+overlap with the source passage, not by understanding."*
+
+It handles every format, which took one idea: **a choice question's correct
+option is the one that appears in the material verbatim.** Distractors are real
+sentences with their longest content word swapped for one borrowed from
+elsewhere in the excerpt, so they stay on-topic but are no longer something the
+text says. That single property means the grader can find the right answer at
+evaluate time without the ask turn having carried a key — which matters because
+the route handler is stateless, so anything it "remembered" would have to travel
+via the browser.
+
+Three details the tests pin down:
+
+- The swap is verified rather than assumed. If a swap happens to produce
+  something the material *does* say, the question would have two right answers,
+  so `corrupt` checks and falls back to a negation.
+- Clipping happens **before** corrupting. The other order can cut the swapped
+  word off the end of a long option, leaving a verbatim prefix that grades as
+  correct.
+- True/false alternates, so "always answer true" is not a winning strategy.
+
+Everything is deterministic — no randomness anywhere — so two runs of one
+document produce the same quiz and a failing test reproduces.
+
+What it cannot do is write a *plausible* wrong option. A word-swapped sentence
+is often visibly clumsy. That needs a model, and the sessions where it shows are
+labelled offline throughout.
 
 **What is unverified, and is flagged in the code:** the platform sits at −65
 credits, so the success-path frame shape was never observed. `textFrom()`
@@ -681,8 +752,8 @@ always the right reading. An evaluation has no safe prose fallback, so it become
 ## 11. Testing discipline
 
 ```bash
-pnpm test          # 71 Vitest unit tests
-pnpm test:e2e      # 11 Playwright tests (needs e2e/.env.development)
+pnpm test          # 111 Vitest unit tests
+pnpm test:e2e      # 16 Playwright tests (needs e2e/.env.development)
 pnpm lint          # 0 errors
 pnpm build
 ```
@@ -707,6 +778,17 @@ their keep encode **judgement**, not mechanics:
   splitting the result and counting paragraphs, because that structure is what
   the agent's citations point at
 - `.doc` is rejected, so the failure surfaces at upload rather than at parse
+- completion counts **distinct answers**, so a double-submit cannot end a quiz
+  early — the replace-don't-append rule above, now load-bearing twice
+- a choice question's citation carries no quote, asserted by checking the
+  serialised question does not contain the source sentence at all
+- an unrecognised format falls back rather than reaching the prompt switch
+- the offline agent's choice questions have exactly **one** option present in
+  the material — two would make the question unanswerable
+- `askedQuestions` returns prompts, not ids. It returned ids at one point, which
+  handed the agent a list of UUIDs and told it not to repeat them; the offline
+  agent reads only the array's *length*, so nothing failed visibly and the bug
+  survived for exactly as long as the live agent was unreachable
 
 `__tests__/source-paths.test.ts` is unusual and worth keeping: it asserts the
 Tailwind `@source` path exists on disk. That is the invariant the Windows symlink
@@ -794,7 +876,8 @@ code review and failed to parse on a fresh Windows clone. `.gitattributes` marks
 | `lib/session-hint.ts` / `components/session-hint.tsx` | Host-only session cookie |
 | `lib/return-to.ts` / `components/return-to.tsx` | Destination hand-off + open-redirect guard |
 | `lib/quiz/context.ts` | Normalisation, budget, boundary truncation |
-| `lib/quiz/prompt.ts` | Quizmaster prompt for both turns |
+| `lib/quiz/plan.ts` | Session policy: length bounds, material capacity, format rotation |
+| `lib/quiz/prompt.ts` | Quizmaster prompt for both turns, per format |
 | `lib/quiz/agent.ts` | `IblAgent` (WebSocket) and `StubAgent` |
 | `lib/quiz/parse.ts` | Tolerant model-reply parsing |
 | `lib/quiz/score.ts` | Score accumulation, idempotent evaluation |

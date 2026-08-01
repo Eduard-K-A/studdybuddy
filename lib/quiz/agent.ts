@@ -16,11 +16,15 @@
 
 import type { QuizContext } from "./context";
 import { buildEvaluationPrompt, buildQuestionPrompt } from "./prompt";
-import type { Question } from "./types";
+import type { QuestionFormat, Question } from "./types";
 
 export interface QuizAgent {
   /** Returns the agent's RAW reply text; parsing belongs to parse.ts. */
-  ask(context: QuizContext, previouslyAsked: readonly string[]): Promise<string>;
+  ask(
+    context: QuizContext,
+    previouslyAsked: readonly string[],
+    format: QuestionFormat,
+  ): Promise<string>;
   evaluate(
     context: QuizContext,
     question: Question,
@@ -255,8 +259,12 @@ export class IblAgent implements QuizAgent {
     });
   }
 
-  ask(context: QuizContext, previouslyAsked: readonly string[]) {
-    return this.send(buildQuestionPrompt(context, previouslyAsked));
+  ask(
+    context: QuizContext,
+    previouslyAsked: readonly string[],
+    format: QuestionFormat,
+  ) {
+    return this.send(buildQuestionPrompt(context, previouslyAsked, format));
   }
 
   evaluate(context: QuizContext, question: Question, answer: string) {
@@ -264,14 +272,84 @@ export class IblAgent implements QuizAgent {
   }
 }
 
+/* ------------------------------------------------------------------------- */
+/* The offline agent                                                          */
+/* ------------------------------------------------------------------------- */
+
+/** Longest option we will show. Long enough to carry a real claim, short enough
+ *  that four of them still scan as a list rather than as prose. */
+const OPTION_CHARS = 160;
+
+/** Compare loosely enough to survive the whitespace normalisation the excerpt
+ *  went through, strictly enough that a swapped word is a miss. */
+function normalise(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/**
+ * The stub's entire notion of "correct": does this text actually appear in the
+ * learner's material?
+ *
+ * That is what lets the offline agent grade a choice question without carrying
+ * an answer key from the ask turn to the evaluate turn — the route handler is
+ * stateless, so anything it "remembered" would have to travel via the browser,
+ * where the learner could read it.
+ */
+function appearsIn(excerpt: string, text: string): boolean {
+  return normalise(excerpt).includes(normalise(text));
+}
+
+/** Cut at a word boundary so an option never ends mid-word. */
+function clip(text: string, limit: number): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= limit) return trimmed;
+  const window = trimmed.slice(0, limit);
+  const space = window.lastIndexOf(" ");
+  return (space > limit * 0.6 ? window.slice(0, space) : window).trimEnd();
+}
+
+function longWords(text: string): string[] {
+  return text.match(/\b[A-Za-z]{6,}\b/g) ?? [];
+}
+
+/**
+ * Make a statement false in a specific, checkable way.
+ *
+ * Swaps the longest content word for one borrowed from elsewhere in the
+ * material, so the result stays on-topic and plausibly worded but is no longer
+ * something the text says — which is exactly the property `appearsIn` tests.
+ * Deterministic: no randomness anywhere in the stub, so two runs of the same
+ * material produce the same quiz and a failing test reproduces.
+ */
+function corrupt(sentence: string, donor: string, excerpt: string): string {
+  const targets = longWords(sentence).sort((a, b) => b.length - a.length);
+  const donors = longWords(donor).sort((a, b) => b.length - a.length);
+
+  for (const target of targets) {
+    const replacement = donors.find(
+      (d) => d.toLowerCase() !== target.toLowerCase(),
+    );
+    if (!replacement) break;
+
+    const swapped = sentence.replace(target, replacement);
+    // Guard the invariant rather than assuming it: if the swap happened to
+    // produce something the material does say, this option would be graded
+    // correct and the question would have two right answers.
+    if (!appearsIn(excerpt, swapped)) return swapped;
+  }
+
+  const negated = `It is not the case that ${sentence.charAt(0).toLowerCase()}${sentence.slice(1)}`;
+  return negated;
+}
+
 /**
  * Deterministic local agent.
  *
  * Not a mock of an LLM — it does not pretend to understand the material. It
- * builds a question from a real sentence in the excerpt and grades by keyword
- * overlap, so the flow, scoring, and UI are all exercisable end to end. The UI
- * labels sessions run this way, so a stub answer is never mistaken for a real
- * evaluation.
+ * builds questions from real sentences in the excerpt and grades by whether the
+ * chosen option is something the material actually says, or by keyword overlap
+ * for written answers. The UI labels sessions run this way, so a stub answer is
+ * never mistaken for a real evaluation.
  */
 export class StubAgent implements QuizAgent {
   /** Prefer substantive sentences — a short declarative one ("X happens in a
@@ -290,17 +368,138 @@ export class StubAgent implements QuizAgent {
     return usable.length > 0 ? usable : all;
   }
 
-  async ask(context: QuizContext, previouslyAsked: readonly string[]) {
+  async ask(
+    context: QuizContext,
+    previouslyAsked: readonly string[],
+    format: QuestionFormat,
+  ) {
     const pool = this.sentences(context.excerpt);
-    const pick = pool[previouslyAsked.length % Math.max(pool.length, 1)] ?? context.excerpt;
+    const index = previouslyAsked.length;
+    const pick = pool[index % Math.max(pool.length, 1)] ?? context.excerpt;
+    const locator = `${context.title}, sentence ${index + 1}`;
+
+    if (format === "multiple-choice") {
+      return this.askChoice(context, pool, pick, index, locator);
+    }
+
+    if (format === "true-false") {
+      // Alternate so a session is not all-true, which would make "always answer
+      // true" a winning strategy and the drill worthless.
+      const statement = clip(pick, OPTION_CHARS);
+      const shouldBeFalse = index % 2 === 1;
+      const donor = pool[(index + 1) % Math.max(pool.length, 1)] ?? pick;
+
+      return JSON.stringify({
+        question: shouldBeFalse
+          ? corrupt(statement, donor, context.excerpt)
+          : statement,
+        sourceRef: { locator },
+      });
+    }
+
+    const lead =
+      format === "essay"
+        ? `Drawing on ${context.title}, develop a paragraph explaining this point and how it connects to the rest of the material:`
+        : `In your own words, explain this point from ${context.title}:`;
 
     return JSON.stringify({
-      question: `In your own words, explain this point from ${context.title}: "${pick.slice(0, 160)}"`,
-      sourceRef: { locator: `${context.title}, sentence ${previouslyAsked.length + 1}`, quote: pick.slice(0, 160) },
+      question: `${lead} "${clip(pick, OPTION_CHARS)}"`,
+      sourceRef: { locator, quote: clip(pick, OPTION_CHARS) },
+    });
+  }
+
+  /** One true option drawn verbatim from the material, three altered ones. */
+  private askChoice(
+    context: QuizContext,
+    pool: readonly string[],
+    pick: string,
+    index: number,
+    locator: string,
+  ) {
+    const correct = clip(pick, OPTION_CHARS);
+
+    const distractors: string[] = [];
+    for (let offset = 1; distractors.length < 3 && offset <= pool.length; offset += 1) {
+      const source = pool[(index + offset) % pool.length];
+      if (!source) continue;
+      // Clip BEFORE corrupting: corrupting first and clipping after could cut
+      // the swapped word off the end and leave a verbatim prefix, which would
+      // grade as correct.
+      const donor = pool[(index + offset + 1) % pool.length] ?? pick;
+      const altered = corrupt(clip(source, OPTION_CHARS), donor, context.excerpt);
+      if (!distractors.includes(altered) && altered !== correct) {
+        distractors.push(altered);
+      }
+    }
+
+    // Rotate the correct answer's position so it is not always first — a fixed
+    // position makes the drill a pattern-matching exercise instead of a recall
+    // one.
+    const options = [...distractors];
+    options.splice(index % (options.length + 1), 0, correct);
+
+    return JSON.stringify({
+      question: `Which of these does ${context.title} actually state?`,
+      options,
+      sourceRef: { locator },
     });
   }
 
   async evaluate(context: QuizContext, question: Question, answer: string) {
+    if (question.format === "true-false") {
+      return this.gradeTrueFalse(context, question, answer);
+    }
+    if (question.format === "multiple-choice" && question.options?.length) {
+      return this.gradeChoice(context, question, answer);
+    }
+    return this.gradeWritten(context, question, answer);
+  }
+
+  private gradeTrueFalse(context: QuizContext, question: Question, answer: string) {
+    const statementIsTrue = appearsIn(context.excerpt, question.prompt);
+    const correctId = statementIsTrue ? "true" : "false";
+    const verdict = answer === correctId ? "correct" : "revisit";
+
+    return JSON.stringify({
+      verdict,
+      explanation:
+        `Offline practice mode: judged by whether the statement appears in your ` +
+        `material as written, not by understanding. The statement is ` +
+        `${statementIsTrue ? "true" : "false"} — ` +
+        `${statementIsTrue ? "the material says exactly this" : "the material does not say this"}.`,
+      sourceRef: question.sourceRef ?? { locator: context.title },
+    });
+  }
+
+  private gradeChoice(context: QuizContext, question: Question, answer: string) {
+    const options = question.options ?? [];
+    const chosen = options.find((o) => o.id === answer);
+    const correct = options.find((o) => appearsIn(context.excerpt, o.text));
+
+    // A question written by the live agent can reach the offline grader when a
+    // live call fails mid-session. There is then no verbatim option to find,
+    // and guessing would be worse than saying so.
+    if (!correct) {
+      return JSON.stringify({
+        verdict: "revisit",
+        explanation:
+          "Offline practice mode could not check this question against your " +
+          "material, so it is marked for review rather than guessed at.",
+        sourceRef: question.sourceRef ?? { locator: context.title },
+      });
+    }
+
+    return JSON.stringify({
+      verdict: chosen?.id === correct.id ? "correct" : "revisit",
+      explanation:
+        `Offline practice mode: the right option is the one your material ` +
+        `actually states — "${clip(correct.text, 120)}". Graded by matching ` +
+        `against the source text, not by understanding.`,
+      sourceRef: question.sourceRef ?? { locator: context.title },
+    });
+  }
+
+  private gradeWritten(context: QuizContext, question: Question, answer: string) {
     const words = (s: string) =>
       new Set(
         s

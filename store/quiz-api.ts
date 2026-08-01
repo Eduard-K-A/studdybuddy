@@ -11,7 +11,7 @@
 
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 
-import type { Evaluation, Material, Question } from "@/lib/quiz/types";
+import type { Evaluation, Material, Question, QuizPlan } from "@/lib/quiz/types";
 
 /** Which agent produced a reply. Mirrors the route handler's contract. */
 export type AgentMode = "live" | "offline";
@@ -27,7 +27,15 @@ export type DegradeReason =
 
 export interface AskRequest {
   readonly material: Material;
-  readonly askedPrompts: readonly string[];
+  readonly plan: QuizPlan;
+  /**
+   * The questions already asked, as text.
+   *
+   * Two jobs: the agent is told not to repeat them, and their count is how the
+   * stateless route handler knows which question number this is — which format
+   * a mixed plan owes, and whether the session has run its length.
+   */
+  readonly askedQuestions: readonly string[];
   readonly username?: string;
 }
 
@@ -36,11 +44,15 @@ export interface AskResponse {
   readonly truncated: boolean;
   readonly degraded?: DegradeReason;
   readonly question: Question;
+  /** The length the server actually agreed to run, after clamping to what the
+   *  material supports. May be shorter than the plan the client sent. */
+  readonly planLength: number;
 }
 
 export interface EvaluateRequest {
   readonly material: Material;
   readonly question: Question;
+  /** For a choice question this is the selected option's id, not its text. */
   readonly answer: string;
   readonly username?: string;
 }

@@ -15,6 +15,7 @@ import {
   type Evaluation,
   type Material,
   type Question,
+  type QuizPlan,
   type QuizState,
 } from "@/lib/quiz/types";
 import type { AgentMode } from "./quiz-api";
@@ -36,19 +37,47 @@ const quizSlice = createSlice({
   name: "quiz",
   initialState,
   reducers: {
-    materialSet(state, action: PayloadAction<Material>) {
+    /** Start a run: new material, new plan, everything else cleared. */
+    materialSet(
+      state,
+      action: PayloadAction<{ material: Material; plan: QuizPlan }>,
+    ) {
       // New material means a new session — carrying the old score across would
       // mix results from two different documents.
-      return { ...initialState, material: action.payload };
+      return {
+        ...initialState,
+        material: action.payload.material,
+        plan: action.payload.plan,
+      };
+    },
+
+    /** Run the same material again from zero. Keeps the plan, drops the score —
+     *  a second attempt is a fresh result, not an improvement to the first. */
+    sessionRestarted(state) {
+      return { ...initialState, material: state.material, plan: state.plan };
     },
 
     questionPresented(
       state,
-      action: PayloadAction<{ question: Question; mode: AgentMode; truncated: boolean }>,
+      action: PayloadAction<{
+        question: Question;
+        mode: AgentMode;
+        truncated: boolean;
+        /** What the server clamped the plan to. */
+        planLength: number;
+      }>,
     ) {
       const next = presentQuestion(state, action.payload.question);
       return {
         ...next,
+        // The server has the final say on length: it clamps to what the excerpt
+        // can actually carry, so a plan asking for more silently running short
+        // would be worse than correcting it here.
+        plan:
+          action.payload.planLength > 0 &&
+          action.payload.planLength !== state.plan.length
+            ? { ...state.plan, length: action.payload.planLength }
+            : state.plan,
         mode: action.payload.mode,
         truncated: action.payload.truncated,
       };
@@ -68,7 +97,12 @@ const quizSlice = createSlice({
   },
 });
 
-export const { materialSet, questionPresented, answerEvaluated, sessionReset } =
-  quizSlice.actions;
+export const {
+  materialSet,
+  sessionRestarted,
+  questionPresented,
+  answerEvaluated,
+  sessionReset,
+} = quizSlice.actions;
 
 export const quizReducer = quizSlice.reducer;

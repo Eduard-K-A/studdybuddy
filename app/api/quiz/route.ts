@@ -3,7 +3,8 @@
  *
  * Everything that touches the agent happens here, server-side:
  *   - the learner's material is turned into a bounded context
- *   - the quizmaster prompt is assembled
+ *   - the session plan is clamped to something we are willing to run
+ *   - the quizmaster prompt is assembled for the format this question takes
  *   - the agent is called over its WebSocket protocol
  *   - the reply is parsed into a typed Question or Evaluation
  *
@@ -14,6 +15,7 @@
 import { NextResponse } from "next/server";
 
 import { buildQuizContext, isUsableMaterial } from "@/lib/quiz/context";
+import { formatFor, normalisePlan } from "@/lib/quiz/plan";
 import { parseEvaluation, parseQuestion } from "@/lib/quiz/parse";
 import {
   AgentUnavailableError,
@@ -22,7 +24,13 @@ import {
   firstUnsafeHeaderIndex,
   type QuizAgent,
 } from "@/lib/quiz/agent";
-import type { Evaluation, Material, Question } from "@/lib/quiz/types";
+import type {
+  AnswerOption,
+  Evaluation,
+  Material,
+  QuestionFormat,
+  Question,
+} from "@/lib/quiz/types";
 
 // The agent client opens a WebSocket, so this must not run on the edge runtime.
 export const runtime = "nodejs";
@@ -41,10 +49,20 @@ export type DegradeReason =
   | "transport"
   | "unknown";
 
+const QUESTION_FORMATS: readonly QuestionFormat[] = [
+  "multiple-choice",
+  "true-false",
+  "short-answer",
+  "essay",
+];
+
 interface AskBody {
   readonly action: "ask";
   readonly material: Material;
-  readonly askedPrompts?: readonly string[];
+  readonly plan: unknown;
+  /** The prompts already asked, so the agent can avoid repeating itself. Also
+   *  how far through the plan we are — the handler is stateless. */
+  readonly askedQuestions: readonly string[];
   readonly username?: string;
 }
 
@@ -64,10 +82,47 @@ function isMaterial(v: unknown): v is Material {
   return typeof m.title === "string" && typeof m.body === "string";
 }
 
+function parseOptionList(v: unknown): readonly AnswerOption[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+
+  const options = v.flatMap((entry): AnswerOption[] => {
+    if (typeof entry !== "object" || entry === null) return [];
+    const o = entry as Record<string, unknown>;
+    return typeof o.id === "string" && typeof o.text === "string"
+      ? [{ id: o.id, text: o.text }]
+      : [];
+  });
+
+  return options.length > 0 ? options : undefined;
+}
+
+/**
+ * Validate a question coming back from the browser.
+ *
+ * It left here as typed JSON, but it is round-tripping through a client we do
+ * not control, so the format is re-checked against the allowlist rather than
+ * trusted — an unrecognised value would otherwise select a prompt branch by
+ * falling through a switch.
+ */
 function isQuestion(v: unknown): v is Question {
   if (typeof v !== "object" || v === null) return false;
   const q = v as Record<string, unknown>;
-  return typeof q.id === "string" && typeof q.prompt === "string";
+  return (
+    typeof q.id === "string" &&
+    typeof q.prompt === "string" &&
+    typeof q.format === "string" &&
+    (QUESTION_FORMATS as readonly string[]).includes(q.format)
+  );
+}
+
+function normaliseQuestion(v: Record<string, unknown>): Question {
+  const options = parseOptionList(v.options);
+  const base: Question = {
+    id: v.id as string,
+    prompt: v.prompt as string,
+    format: v.format as QuestionFormat,
+  };
+  return options ? { ...base, options } : base;
 }
 
 function parseBody(v: unknown): RequestBody | null {
@@ -76,10 +131,16 @@ function parseBody(v: unknown): RequestBody | null {
   const username = typeof b.username === "string" ? b.username : undefined;
 
   if (b.action === "ask" && isMaterial(b.material)) {
-    const askedPrompts = Array.isArray(b.askedPrompts)
-      ? b.askedPrompts.filter((p): p is string => typeof p === "string")
+    const askedQuestions = Array.isArray(b.askedQuestions)
+      ? b.askedQuestions.filter((p): p is string => typeof p === "string")
       : [];
-    return { action: "ask", material: b.material, askedPrompts, username };
+    return {
+      action: "ask",
+      material: b.material,
+      plan: b.plan,
+      askedQuestions,
+      username,
+    };
   }
 
   if (
@@ -91,7 +152,7 @@ function parseBody(v: unknown): RequestBody | null {
     return {
       action: "evaluate",
       material: b.material,
-      question: b.question,
+      question: normaliseQuestion(b.question as unknown as Record<string, unknown>),
       answer: b.answer,
       username,
     };
@@ -153,6 +214,30 @@ export async function POST(request: Request): Promise<Response> {
   const context = buildQuizContext(body.material);
   const username = body.username?.trim() || process.env.IBLAI_USERNAME || "anonymous";
 
+  // The plan and the format are settled here rather than taken from the client.
+  // Capacity is measured against the excerpt the agent will actually see, not
+  // the whole document — material beyond the context budget cannot produce
+  // questions, so counting it would promise a variety we cannot deliver.
+  let format: QuestionFormat = "short-answer";
+  let planLength = 0;
+
+  if (body.action === "ask") {
+    const plan = normalisePlan(body.plan, context.excerpt.length);
+    planLength = plan.length;
+
+    // The session length is enforced on both sides. The UI stops offering
+    // "next question" at the limit, but the limit is what bounds how many agent
+    // calls one session can spend, so it cannot live only in the client.
+    if (body.askedQuestions.length >= plan.length) {
+      return NextResponse.json(
+        { error: "This quiz has already run its length.", complete: true },
+        { status: 409 },
+      );
+    }
+
+    format = formatFor(plan, body.askedQuestions.length);
+  }
+
   // Explicit opt-out for local dev, CI and E2E, where spending credits on a
   // deterministic assertion would be pointless.
   const forceStub = process.env.QUIZ_AGENT === "stub";
@@ -164,7 +249,7 @@ export async function POST(request: Request): Promise<Response> {
   const run = async (agent: QuizAgent, mode: AgentMode) => {
     const rawReply =
       body.action === "ask"
-        ? await agent.ask(context, body.askedPrompts ?? [])
+        ? await agent.ask(context, body.askedQuestions, format)
         : await agent.evaluate(context, body.question, body.answer);
 
     const base = {
@@ -174,9 +259,16 @@ export async function POST(request: Request): Promise<Response> {
     };
 
     if (body.action === "ask") {
-      const question: Question | null = parseQuestion(rawReply, crypto.randomUUID());
+      const question: Question | null = parseQuestion(
+        rawReply,
+        crypto.randomUUID(),
+        format,
+      );
       if (!question) throw new AgentUnavailableError("Empty reply.", "transport");
-      return NextResponse.json({ ...base, question });
+      // The clamped length goes back with every question, so a client that
+      // asked for more than the material supports learns the real number
+      // instead of silently running short.
+      return NextResponse.json({ ...base, question, planLength });
     }
 
     const evaluation: Evaluation | null = parseEvaluation(rawReply, body.question.id);

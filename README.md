@@ -13,7 +13,7 @@ Built as the bonus for the ibl.ai Software Engineer application: scaffolded with
 |---|---|
 | **Live URL** | **https://studdybuddy-lemon.vercel.app** |
 | **Baseline commit** | [`b072976`](../../commit/b072976) — the untouched scaffold |
-| **Tests** | 71 unit (Vitest) · 11 E2E (Playwright), incl. two axe scans |
+| **Tests** | 111 unit (Vitest) · 16 E2E (Playwright), incl. three axe scans |
 | **Lighthouse** | Accessibility **100** · SEO **100** · Best Practices **77** · Performance **41** ([why](#performance)) |
 | **Time spent** | roughly six hours |
 
@@ -25,8 +25,9 @@ Honest accounting of what is and isn't done:
 
 | Success criterion | Status |
 |---|---|
-| Public repo, conventional commits | ✅ 16 commits |
+| Public repo, conventional commits | ✅ 18 commits |
 | Working quiz flow | ⚠️ works, but **offline** — the ibl.ai platform has no credits (see below) |
+| Finite runs, four question formats | ✅ multiple choice, true/false, short answer, essay, plus mixed |
 | Deliberate visual identity | ✅ six-token system, documented |
 | Deployed URL with working SSO | ✅ [live on Vercel](https://studdybuddy-lemon.vercel.app), SSO verified on the deployed origin |
 | Native desktop build | ⚠️ scaffolded, **not built** — no Rust toolchain ([why](docs/DESKTOP_BUILD.md)) |
@@ -57,7 +58,7 @@ pages, the Vitest and Playwright harnesses, and the Tauri templates.
 
 | Area | Files |
 |---|---|
-| Quiz domain logic | `lib/quiz/{context,parse,score,prompt,agent,extract,types}.ts` |
+| Quiz domain logic | `lib/quiz/{context,parse,score,prompt,agent,extract,plan,types}.ts` |
 | Backend | `app/api/quiz/route.ts`, `app/api/quiz/extract/route.ts` |
 | UI | `app/(app)/quiz/`, `components/quiz/*` |
 | State | `store/quiz-{api,slice}.ts` |
@@ -171,6 +172,59 @@ Dragging is layered over a real labelled `<input type="file">`, not a
 replacement for it — a drop target is invisible to a screen reader and
 unreachable by keyboard. Extraction status is `aria-live`, because it finishes
 asynchronously and changes a textarea further down the page.
+
+---
+
+## Choosing the quiz
+
+Before starting, the learner picks **how** to be asked and **how many** times.
+Both are fixed for the run: changing either half way through would make one
+score describe two different exercises.
+
+**Five formats.** Multiple choice, true/false, short answer, essay, and mixed —
+which rotates through the first three. Essay is deliberately excluded from the
+rotation: mixed exists to keep a drill quick and varied, and a five-paragraph
+question landing between two true/false items breaks the rhythm that makes the
+drill worth doing. The formats differ only in an instruction block and a reply
+schema; the grounding rules are shared, which is the point of building it as one
+prompt rather than five.
+
+**The run is finite.** 5, 10 or 15 questions, and the session ends on a summary
+listing every question with its verdict — a quiz with no end has no result, just
+a tally the learner has to interpret. The limit is enforced on both sides: the
+UI stops offering "next question", and the route handler returns 409 past it,
+because the length is what bounds how many agent calls one session can spend.
+
+**The offered lengths are capped by the material.** The agent only ever sees a
+12,000-character excerpt, so questions come from a finite pool of ideas. Asking
+fifteen questions about two paragraphs does not produce fifteen questions — it
+produces the same three, reworded, which reads as the agent malfunctioning. So
+`lib/quiz/plan.ts` scores capacity at roughly one question per 400 characters
+and the form offers only what the material supports, saying why the rest are
+missing. A silently absent "15" reads as a bug; "your material supports about 7"
+reads as a reason to paste more.
+
+**The answer key never reaches the browser.** For multiple choice the agent is
+told not to mark which option is correct, and the parser strips the quoted
+passage from the question's citation — for a choice question that quote is
+usually the sentence one option was copied from, so shipping it would put the
+answer in the page for anyone who opened devtools. Correctness is settled on the
+evaluate turn instead, server-side, against the same material: one round trip
+that was already being made. The locator survives, and the full citation appears
+in the margin rail once the answer is graded.
+
+**Choice questions are radio groups, not styled buttons.** A real
+`<fieldset>`/`<legend>`/`<input type="radio">` gives grouping, arrow-key
+navigation and a single tab stop for free, and none of it can be got subtly
+wrong. The summary moves focus to its heading on mount, because the question the
+learner was reading has just been replaced by a different screen and a screen
+reader user would otherwise get no announcement that the session ended.
+
+One thing the offline agent cannot do well: its distractors are real sentences
+with a word swapped, which is deterministic and gradeable without an answer key
+but often visibly clumsy ("the nucleophile attacks the substituents carbon").
+Plausible wrong options need a model. It is labelled offline practice throughout,
+and the grading explanation says it matches source text rather than understanding.
 
 ---
 
@@ -394,8 +448,8 @@ refresh-token rotation, JWKS verification, SAML.
 ## Testing
 
 ```bash
-pnpm test          # 71 Vitest unit tests
-pnpm test:e2e      # 11 Playwright tests (needs e2e/.env.development)
+pnpm test          # 111 Vitest unit tests
+pnpm test:e2e      # 16 Playwright tests (needs e2e/.env.development)
 pnpm lint          # 0 errors
 pnpm build
 ```
@@ -412,6 +466,16 @@ mechanics:
 - cleaning PDF output **preserves blank-line paragraph breaks** while rejoining
   wrapped lines — the test asserts the result still splits into two paragraphs,
   because that structure is what the agent's `¶` citations point at
+- a session completes on the count of **distinct answers**, so a double-submit
+  cannot end a quiz early — the same replace-don't-append rule, now load-bearing
+  twice
+- a choice question's parsed citation **carries no quote**, asserted by checking
+  the serialised question does not contain the source sentence at all
+- an unrecognised format falls back to short answer rather than reaching the
+  prompt switch, because the format selects which instructions the agent gets
+- the offline agent's choice questions have **exactly one** option that appears
+  in the material — two would make the question unanswerable, and it grades
+  without ever holding an answer key
 
 The extraction route was also exercised end to end against real bytes — a
 generated single-page PDF, a `.docx`, a `.md`, plus a truncated PDF, a
@@ -419,8 +483,10 @@ zero-byte file, an unsupported extension and a missing form field — confirming
 each returns the intended status and a message the learner can act on.
 
 E2E covers the unauthenticated redirect, the authenticated render, a full
-answer→evaluation round trip, and **an axe scan of the quiz page — zero critical
-or serious violations**.
+answer→evaluation round trip, a complete run from first question to summary, the
+multiple-choice and true/false surfaces, the length clamp, and **three axe scans
+— empty state, answered surface and summary — with zero critical or serious
+violations**.
 
 Accessibility was built in rather than retrofitted: visible 2px focus rings,
 `aria-live` on the margin rail so evaluations are announced, labelled inputs,
