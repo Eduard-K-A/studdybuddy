@@ -12,7 +12,7 @@ and are recorded so they are not mistaken for the first two.
 
 | | |
 |---|---|
-| Scaffold | `iblai/vibe-starter`, `spa` branch — baseline commit [`b072976`](../../commit/b072976) |
+| Scaffold | `iblai/vibe-starter`, `spa` branch — baseline commit [`b072976`](https://github.com/Eduard-K-A/studdybuddy/commit/b072976) |
 | SDK | `@iblai/iblai-js@1.6.0` |
 | Stack | Next.js 16.2.4, React 19.2.4, Tailwind v4, pnpm |
 | Environment | Windows 11, plus a Vercel deployment |
